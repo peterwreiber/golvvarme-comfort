@@ -1,0 +1,17 @@
+name: Golvvärme Comfort
+version: "0.3.0"
+slug: golvvarme_comfort
+description: Elgolvvärme efter elpris (Tibber eller Nord Pool) – förvärmer billigt inför komforttider och sänker vid dyr el
+url: https://github.com/peterwreiber/golvvarme-comfort
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+timeout: 30
+homeassistant_api: true
+ingress: true
+ingress_port: 8097
+panel_icon: mdi:heating-coil
+panel_title: Golvvärme

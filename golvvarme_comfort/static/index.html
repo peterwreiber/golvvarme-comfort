@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <script src="./theme.js"></script>
+  <title>Golvvärme Comfort</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><span class="eyebrow">ELGOLVVÄRME EFTER ELPRIS</span><h1>Golvvärme <span>Comfort</span></h1></div>
+    <div class="header-actions">
+      <button id="theme-toggle" type="button" class="badge theme-toggle">Tema: auto</button>
+      <span id="mode" class="badge">Ansluter…</span>
+    </div>
+  </header>
+  <main>
+    <div id="notice" role="status" hidden></div>
+    <div id="conflict" class="card warn" hidden>
+      <strong>Den gamla automationen är fortfarande på</strong>
+      <p id="conflict-text"></p>
+      <button id="conflict-off" type="button">Stäng av automationen</button>
+    </div>
+
+    <section class="hero card" aria-labelledby="status-title">
+      <span class="eyebrow">JUST NU</span>
+      <h2 id="status-title">–</h2>
+      <p id="status-message">Hämtar status…</p>
+      <div class="now-grid">
+        <div class="now-tile"><span>Golvtermostat</span><strong id="now-current">–</strong><small id="now-action"></small></div>
+        <div class="now-tile"><span>Planens mål</span><strong id="now-target">–</strong><small id="now-reason"></small></div>
+        <div class="now-tile"><span>Elpris nu</span><strong id="now-price">–</strong><small id="now-level"></small></div>
+        <div class="now-tile"><span>Nästa ändring</span><strong id="next-target">–</strong><small id="next-when"></small></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-heading"><h2>Plan och historik</h2><small id="chart-note" class="muted"></small></div>
+      <p>Linjen visar vad golvet ska hålla. Det gröna fältet är dina komforttider, det orange är förvärmning när elen är billig, och staplarna är elpriset (röda = dyra).</p>
+      <div id="chart" class="chart" aria-label="Plan för golvvärmen"></div>
+      <div class="chart-legend">
+        <span class="legend-item series-0">Golvtemperatur</span>
+        <span class="legend-item series-1">Mål (historik)</span>
+        <span class="legend-item series-2 dashed">Mål (plan)</span>
+        <span class="key comfort">■ Komfort</span><span class="key preheat">■ Förvärmning</span><span class="key expensive">■ Dyr el</span>
+      </div>
+      <div class="metrics">
+        <div><span>Värmde idag</span><strong id="today-hours">–</strong><small id="today-cost"></small></div>
+        <div><span>Senaste 24 h</span><strong id="day-hours">–</strong><small id="day-cost"></small></div>
+        <div><span>Kommande ändringar</span><ul id="changes" class="changes"></ul></div>
+      </div>
+    </section>
+
+    <section class="card" id="settings-card">
+      <h2>Inställningar</h2>
+      <form id="settings">
+        <label class="toggle big"><input type="checkbox" id="enabled"> Styr termostaten
+          <small id="enabled-hint">Av = bara visa plan. Termostatens eget program gäller då, och det gäller också om tillägget stoppas eller elpriset saknas.</small></label>
+
+        <h3>Komforttider</h3>
+        <p class="hint">Tider då golvet ska vara varmt. Planen förvärmer själv innan, under de billigaste kvartarna.</p>
+        <div id="periods"></div>
+        <button type="button" class="secondary" id="add-period">+ Lägg till tid</button>
+
+        <h3>Semester</h3>
+        <div class="vacation">
+          <label class="toggle"><input type="checkbox" id="vacation-enabled"> Semesterläge
+            <small>Komforttiderna pausas och golvet hålls på semestertemperaturen. Före hemkomsten förvärms golvet som vanligt, och semestern stängs av automatiskt när den är slut.</small></label>
+          <div class="vacation-fields" id="vacation-fields">
+            <label>Från<span class="when" id="vacation-start"></span></label>
+            <label>Till (hemkomst)<span class="when" id="vacation-end"></span></label>
+            <label>Semestertemperatur (°C)<input type="number" step="0.5" id="vacation-temp"></label>
+          </div>
+        </div>
+
+        <h3>Temperaturer</h3>
+        <div class="field-grid">
+          <label>Komfort (°C)<input type="number" step="0.5" id="comfort_temp"></label>
+          <label>Ekonomi, övrig tid (°C)<input type="number" step="0.5" id="economy_temp"></label>
+          <label>Sänkt vid dyr el (°C)<input type="number" step="0.5" id="setback_temp"></label>
+          <label>Sänk komfort vid dyr el (°C)<input type="number" step="0.5" id="comfort_reduction"><small>0 = aldrig</small></label>
+        </div>
+
+        <h3>Elpris</h3>
+        <div class="field-grid">
+          <label>Vad räknas som dyrt?<select id="expensive_mode"><option value="relative">Dygnets dyraste del</option><option value="absolute">Över ett fast pris</option></select></label>
+          <label data-mode="relative">Dyrast andel av dygnet (%)<input type="number" step="5" id="expensive_percent"><small>75 = de dyraste 25 % av dygnets kvartar</small></label>
+          <label data-mode="relative">…men bara om över (kr/kWh)<input type="number" step="0.1" id="expensive_min_price"><small id="price-hint">Gäller priset från din prisgivare.</small></label>
+          <label data-mode="absolute">Dyrt över (kr/kWh)<input type="number" step="0.1" id="expensive_price"></label>
+          <label>Extra värme under (kr/kWh)<input type="number" step="0.1" id="cheap_boost_below"><small>Värmer till komfort när elen är så billig. 0 = av</small></label>
+        </div>
+
+        <details class="advanced"><summary>Avancerat</summary>
+          <div class="field-grid">
+            <label>Uppvärmningstakt (°C/h)<input type="number" step="0.1" id="heatup_rate"><small>Hur fort golvet blir varmt. Uppmätt ~1 °C/h.</small></label>
+            <label>Avsvalning (°C/h)<input type="number" step="0.05" id="cooldown_rate"><small>Hur fort golvet svalnar när det inte värms. Uppmätt ~0,45 °C/h.</small></label>
+            <label>Längsta förvärmning (h)<input type="number" step="0.5" id="max_preheat_hours"></label>
+            <label>Hålleffekt (0–1)<input type="number" step="0.05" id="holding_share"><small>Andel av tiden golvet värmer för att hålla temperaturen.</small></label>
+            <label>Effekt (kW)<input type="number" step="0.1" id="power_kw"><small>Uppskattad, används bara för kronor.</small></label>
+            <label>Termostat<select id="climate_entity"></select></label>
+            <label>Elpris (Tibber eller Nord Pool)<select id="price_entity"></select><small>Välj givaren för aktuellt pris. Nord Pool ger spotpris utan skatt och nätavgift.</small></label>
+            <label>Reservtemperatur (°C)<input type="number" step="0.5" id="fallback_temp"><small>Används när styrningen släpper termostaten och den saknar eget program (läget auto).</small></label>
+            <label>Automation som krockar<select id="conflict_automation"></select></label>
+          </div>
+        </details>
+        <div class="actions"><span id="save-status" class="hint"></span><button type="submit">Spara</button></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Händelser</h2>
+      <ul id="events" class="events"></ul>
+    </section>
+    <footer id="version"></footer>
+  </main>
+</body>
+</html>
