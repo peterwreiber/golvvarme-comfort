@@ -3,6 +3,9 @@
 from datetime import datetime, timedelta
 
 SLOT = 15 * 60
+# Expensive or cheap runs shorter than this are ignored: a floor holds its heat for hours, so a
+# 15-minute dip saves nothing, while each change costs two writes to a cloud thermostat.
+MIN_RUN_SLOTS = 4
 DAYS = ["mån", "tis", "ons", "tor", "fre", "lör", "sön"]
 
 DEFAULTS = {
@@ -195,6 +198,27 @@ def expensive_flags(config, slots, prices, tz):
     return flags
 
 
+def drop_short_runs(flags, min_slots, open_ends):
+    """flags with True runs shorter than min_slots set to False.
+
+    open_ends[i] is True when slot i lies outside the known prices (or before the plan); a run that
+    touches such a slot may continue there, so it is kept."""
+    result = list(flags)
+    i = 0
+    while i < len(result):
+        if not result[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(result) and result[j]:
+            j += 1
+        touches_open = (i == 0 or open_ends[i - 1]) or (j == len(result) or open_ends[j])
+        if j - i < min_slots and not touches_open:
+            result[i:j] = [False] * (j - i)
+        i = j
+    return result
+
+
 def best_preheat_start(config, slots, index_of, comfort_start, hours_needed, now):
     """Start time of preheating before comfort_start that gives the lowest estimated cost.
 
@@ -251,12 +275,24 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
     committed_preheat: {comfort_start: preheat_start} already begun; kept so a changing room
     temperature cannot move a running preheat back and forth."""
     first = now - (now % SLOT)
-    last_price = prices[-1][0] + (prices[-1][0] - prices[-2][0] if len(prices) > 1 else 3600) if prices else first + SLOT
-    end = min(first + horizon_hours * 3600, max(last_price, first + 3600 * 6))
+    if prices:
+        step = prices[-1][0] - prices[-2][0] if len(prices) > 1 else 3600
+        prices_end = prices[-1][0] + step
+    else:
+        prices_end = first + SLOT
+    end = min(first + horizon_hours * 3600, max(prices_end, first + 3600 * 6))
     stamps = list(range(int(first), int(end), SLOT))
     slots = [(t, price_at(prices, t)) for t in stamps]
     index_of = {t: i for i, t in enumerate(stamps)}
-    flags = expensive_flags(config, slots, prices, tz)
+    # Look back a little so a run that began before now keeps its true length.
+    back = [(t, price_at(prices, t)) for t in range(int(first) - (MIN_RUN_SLOTS - 1) * SLOT, int(first), SLOT)]
+    extended = back + slots
+    open_ends = [price is None for _t, price in extended]
+    expensive_all = drop_short_runs(expensive_flags(config, extended, prices, tz), MIN_RUN_SLOTS, open_ends)
+    cheap_all = drop_short_runs(
+        [price is not None and config["cheap_boost_below"] > 0 and price <= config["cheap_boost_below"] and not expensive
+         for (_t, price), expensive in zip(extended, expensive_all)], MIN_RUN_SLOTS, open_ends)
+    flags, cheap = expensive_all[len(back):], cheap_all[len(back):]
     windows = comfort_windows(config, first, end + config["max_preheat_hours"] * 3600, tz)
     away = vacation_bounds(config, tz)
     if away:
@@ -272,7 +308,7 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
         windows = clipped
 
     plan = []
-    for (t, price), expensive in zip(slots, flags):
+    for (t, price), expensive, boost in zip(slots, flags, cheap):
         in_comfort = any(a <= t < b for a, b in windows)
         if away and away[0] <= t < away[1]:
             target, reason = config["vacation"]["temp"], "Semester"
@@ -284,7 +320,7 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
             target, reason = config["economy_temp"], "Ekonomi"
             if expensive:
                 target, reason = config["setback_temp"], "Dyr el – sänkt"
-            elif price is not None and config["cheap_boost_below"] > 0 and price <= config["cheap_boost_below"]:
+            elif boost:
                 target, reason = config["comfort_temp"], "Billig el – extra värme"
         plan.append({"t": t, "price": price, "target": round(target, 1), "reason": reason,
                      "expensive": expensive, "comfort": in_comfort})

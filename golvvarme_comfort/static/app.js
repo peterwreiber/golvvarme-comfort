@@ -42,8 +42,8 @@ function renderStatus(s) {
   $("status-title").textContent = s.reason || (s.plan ? "–" : "Ingen plan");
   $("status-message").textContent = [s.message, s.error, s.price_error].filter(Boolean).join(" · ");
   $("now-current").textContent = temp(th.current);
-  const mode = th.mode === "auto" ? "eget program" : th.mode === "heat" ? "konstant" : th.mode || "";
-  $("now-action").textContent = `${th.action === "heating" ? "Värmer" : "Vilar"} · ${mode} ${th.target != null ? temp(th.target) : ""}`;
+  const setting = th.mode === "auto" ? "eget program" : th.target != null ? `inställd på ${temp(th.target)}` : th.mode || "";
+  $("now-action").textContent = `${th.action === "heating" ? "Värmer" : "Vilar"} · ${setting}`;
   $("now-target").textContent = temp(s.target);
   $("now-reason").textContent = s.reason || "";
   $("now-price").textContent = s.price == null ? "–" : kr(s.price);
@@ -74,7 +74,7 @@ function renderChanges(plan) {
       li.className = row.reason.startsWith("Förvärm") ? "preheat" : row.comfort ? "comfort" : row.target < prev.target ? "low" : "";
       li.textContent = `${when(row.t)} → ${temp(row.target)} · ${row.reason}`;
       list.append(li);
-      if (list.children.length >= 12) break;
+      if (list.children.length >= 8) break;
     }
     prev = row;
   }

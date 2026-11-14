@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from planner import DEFAULTS, PlanError, build_plan, next_change, vacation_bounds, validate
+from planner import DEFAULTS, PlanError, build_plan, next_change, price_at, vacation_bounds, validate
 from prices import LABELS as PRICE_LABELS, PriceError, load_prices
 
 LOG = logging.getLogger("golvvarme_comfort")
@@ -23,7 +23,11 @@ STATIC = Path(__file__).parent / "static"
 VERSION = os.environ.get("GOLVVARME_VERSION", "dev")
 # A cloud thermostat: never write more often than this, except when handing control back.
 MIN_WRITE_SECONDS = 300
+# After this many writes that the thermostat did not take, retry only every UNCONFIRMED_RETRY_SECONDS.
+UNCONFIRMED_LIMIT = 3
+UNCONFIRMED_RETRY_SECONDS = 1800
 PRICE_CACHE_SECONDS = 900
+MAX_BODY = 16384
 
 
 class HaError(Exception):
@@ -65,6 +69,11 @@ class HomeAssistant:
         return rows[0] if rows else []
 
 
+def degrees(value):
+    """Swedish decimal comma, like the rest of the page."""
+    return f"{value:.1f}".replace(".", ",")
+
+
 def parse_time(text):
     return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
 
@@ -96,7 +105,6 @@ def setpoint(caps, value):
 
 def heating_summary(rows, prices, power_kw, start, end):
     """Hours with hvac_action heating in [start, end) and their estimated cost at power_kw."""
-    from planner import price_at
     hours = cost = 0.0
     timeline = []
     for row in rows:
@@ -122,20 +130,25 @@ def heating_summary(rows, prices, power_kw, start, end):
 class EventLog:
     def __init__(self, path, limit=300):
         self.path, self.limit = path, limit
+        self.lock = threading.Lock()
         try:
             self.rows = json.loads(path.read_text())
         except (OSError, ValueError):
             self.rows = []
 
     def add(self, kind, message):
-        self.rows.append({"t": time.time(), "kind": kind, "message": message})
-        self.rows = self.rows[-self.limit:]
-        try:
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.rows, ensure_ascii=False))
-            tmp.replace(self.path)
-        except OSError:
-            LOG.exception("Kunde inte spara händelseloggen")
+        with self.lock:
+            self.rows = [*self.rows, {"t": time.time(), "kind": kind, "message": message}][-self.limit:]
+            try:
+                tmp = self.path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(self.rows, ensure_ascii=False))
+                tmp.replace(self.path)
+            except OSError:
+                LOG.exception("Kunde inte spara händelseloggen")
+
+    def recent(self, count=100):
+        with self.lock:
+            return self.rows[-count:][::-1]
 
 
 class Controller:
@@ -151,6 +164,9 @@ class Controller:
         # Requested setpoint -> what the thermostat actually stored (devices that ignore our step).
         self.equivalent = {}
         self.last_request = None
+        # (target, attempts) for writes the thermostat has not confirmed yet.
+        self.unconfirmed = None
+        self.stuck_reported = False
         self.committed = {}
         self.status = {"message": "Startar…"}
         self.plan = None
@@ -227,7 +243,7 @@ class Controller:
                 if caps["heat"]:
                     data["hvac_mode"] = "heat"
                 self.ha.service("climate", "set_temperature", data)
-                self.events.add("info", f"{reason}: termostaten saknar eget program, ställd på {value:.1f} °C")
+                self.events.add("info", f"{reason}: termostaten saknar eget program, ställd på {degrees(value)} °C")
         except HaError as exc:
             self.events.add("error", f"{reason}: kunde inte lämna tillbaka termostaten ({exc})")
 
@@ -246,17 +262,21 @@ class Controller:
     def tick(self, now=None):
         now = time.time() if now is None else now
         with self.lock:
-            self.end_vacation_if_over(now)
+            try:
+                self.end_vacation_if_over(now)
+            except HaError as exc:
+                self.set_status({"error": f"Tidszonen kunde inte läsas: {exc}", "message": "Väntar"})
+                return
             config = dict(self.config)
             if not config["climate_entity"] or not config["price_entity"]:
-                self.status = {"message": "Välj termostat och elprisgivare under Avancerat i inställningarna",
-                               "enabled": config["enabled"], "now": now, "version": VERSION, "setup": True}
-                self.publish(self.status)
+                self.set_status({"message": "Välj termostat och elprisgivare under Avancerat i inställningarna",
+                                 "enabled": config["enabled"], "now": now, "version": VERSION, "setup": True})
                 return
             try:
                 climate = self.ha.state(config["climate_entity"])
             except HaError as exc:
-                self.status = {"error": f"Termostaten kunde inte läsas: {exc}", "message": "Väntar"}
+                self.set_status({"error": f"Termostaten kunde inte läsas: {exc}", "message": "Väntar",
+                                 "enabled": config["enabled"], "now": now, "version": VERSION})
                 return
             attrs = climate.get("attributes", {})
             caps = thermostat_caps(attrs)
@@ -285,8 +305,7 @@ class Controller:
                 if config["enabled"] and available and not self.handed_back(caps, climate) and now - self.last_write >= MIN_WRITE_SECONDS:
                     self.last_write = now
                     self.hand_back(config["climate_entity"], "Elpriser saknas")
-                self.status = status
-                self.publish(status)
+                self.set_status(status)
                 return
             plan = build_plan(config, prices, now, self.zone(), current, committed_preheat=self.committed)
             for item in plan["preheats"]:
@@ -307,25 +326,44 @@ class Controller:
             elif not available:
                 status["message"] = "Termostaten är inte tillgänglig"
             elif self.follows(caps, climate, target):
+                self.unconfirmed, self.stuck_reported = None, False
                 status["message"] = "Termostaten följer planen"
-            elif now - self.last_write < MIN_WRITE_SECONDS:
-                status["message"] = "Väntar några minuter innan nästa ändring"
             else:
-                self.last_write = now
-                try:
-                    data = {"entity_id": config["climate_entity"], "temperature": target}
-                    if caps["heat"]:
-                        data["hvac_mode"] = "heat"
-                    self.ha.service("climate", "set_temperature", data)
-                    self.last_request = target
-                    self.events.add("change", f"{target:.1f} °C – {row['reason']}")
-                    status["message"] = f"Ställde termostaten på {target:.1f} °C"
-                except HaError as exc:
-                    self.events.add("error", f"Kunde inte ställa termostaten: {exc}")
-                    status["message"] = "Kunde inte ställa termostaten"
-                    status["error"] = str(exc)
-            self.status = status
-            self.publish(status)
+                attempts = self.unconfirmed[1] if self.unconfirmed and self.unconfirmed[0] == target else 0
+                stuck = attempts >= UNCONFIRMED_LIMIT
+                if stuck and attempts == UNCONFIRMED_LIMIT and not self.stuck_reported:
+                    self.stuck_reported = True
+                    self.events.add("error", f"Termostaten tar inte emot {degrees(target)} °C – försöker igen var 30:e minut")
+                if stuck:
+                    status["error"] = (f"Termostaten har inte tagit emot {degrees(target)} °C efter {attempts} försök. "
+                                       "Kontrollera termostaten och dess integration.")
+                if now - self.last_write < (UNCONFIRMED_RETRY_SECONDS if stuck else MIN_WRITE_SECONDS):
+                    status["message"] = "Väntar innan nästa försök" if stuck else "Väntar några minuter innan nästa ändring"
+                else:
+                    self.write_target(config, caps, target, row["reason"], attempts, status, now)
+            self.set_status(status)
+
+    def write_target(self, config, caps, target, reason, attempts, status, now):
+        self.last_write = now
+        try:
+            data = {"entity_id": config["climate_entity"], "temperature": target}
+            if caps["heat"]:
+                data["hvac_mode"] = "heat"
+            self.ha.service("climate", "set_temperature", data)
+            self.last_request = target
+            self.unconfirmed = (target, attempts + 1)
+            if attempts == 0:
+                self.stuck_reported = False
+                self.events.add("change", f"{degrees(target)} °C – {reason}")
+            status["message"] = f"Ställde termostaten på {degrees(target)} °C"
+        except HaError as exc:
+            self.events.add("error", f"Kunde inte ställa termostaten: {exc}")
+            status["message"] = "Kunde inte ställa termostaten"
+            status["error"] = str(exc)
+
+    def set_status(self, status):
+        self.status = status
+        self.publish(status)
 
     def conflict(self, config):
         entity = config["conflict_automation"]
@@ -370,8 +408,9 @@ class Controller:
             return {**self.status, "plan": self.plan and {"slots": self.plan["slots"], "windows": self.plan["windows"],
                                                           "preheats": self.plan["preheats"]}}
 
-    def history(self, hours=24):
-        """Past thermostat readings, targets and today's heating summary for the chart."""
+    def history(self):
+        """Past 24 h of thermostat readings and targets, and today's heating summary, for the chart."""
+        hours = 24
         now = time.time()
         with self.lock:
             config = dict(self.config)
@@ -453,7 +492,7 @@ def handler_for(controller, open_access=False):
                 elif path == "/api/history":
                     self.respond(200, controller.history())
                 elif path == "/api/events":
-                    self.respond(200, controller.events.rows[-100:][::-1])
+                    self.respond(200, controller.events.recent())
                 elif path == "/api/entities":
                     self.respond(200, controller.entities())
                 else:
@@ -474,7 +513,10 @@ def handler_for(controller, open_access=False):
             path = urlsplit(self.path).path
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length)) if 0 < length <= 16384 else {}
+                if length > MAX_BODY:
+                    self.respond(413, {"error": "För stor begäran."})
+                    return
+                body = json.loads(self.rfile.read(length)) if length > 0 else {}
                 if path == "/api/settings":
                     if not isinstance(body, dict):
                         raise PlanError("Inställningarna måste vara ett objekt.")
@@ -503,7 +545,7 @@ def run_loop(controller, stop, interval=60):
         except Exception:
             LOG.exception("Oväntat fel i styrloopen")
             with controller.lock:
-                controller.status = {"error": "Internt fel i styrloopen, försöker igen om en minut.", "message": "Pausad"}
+                controller.set_status({"error": "Internt fel i styrloopen, försöker igen om en minut.", "message": "Pausad"})
         stop.wait(interval)
 
 

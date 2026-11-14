@@ -1,5 +1,6 @@
 """Electricity prices from Tibber or Nord Pool (official integration or the HACS nordpool sensor)."""
 
+import json
 import re
 from datetime import datetime, timedelta
 
@@ -110,7 +111,6 @@ def load_prices(ha, entity_id, now, tz):
         return hacs_prices(attrs), "nordpool_hacs"
     source = ha.request("/template", {"template": SOURCE_TEMPLATE.replace("__ENTITY__", entity_id)})
     if isinstance(source, str):
-        import json
         source = json.loads(source)
     platform = (source or {}).get("platform")
     local = datetime.fromtimestamp(now, tz)

@@ -173,6 +173,38 @@ class PlannerTest(unittest.TestCase):
         self.assertTrue(all(r["price"] == 1.0 for r in plan["slots"]))
         self.assertEqual(plan["slots"][0]["t"], ts("2026-11-13T12:00"))
 
+    def test_short_expensive_blips_are_ignored(self):
+        prices = flat_prices(day="2026-11-12", value=1.2, days=3)
+        prices = with_range(prices, ts("2026-11-13T00:00"), ts("2026-11-13T00:15"), 3.0)   # one quarter
+        prices = with_range(prices, ts("2026-11-13T18:00"), ts("2026-11-13T18:30"), 3.0)   # inside comfort
+        prices = with_range(prices, ts("2026-11-13T09:00"), ts("2026-11-13T10:00"), 3.0)   # a full hour
+        plan = build_plan(validate({}), prices, ts("2026-11-12T23:30"), TZ, current_temp=18.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual((row[ts("2026-11-13T00:00")]["target"], row[ts("2026-11-13T00:00")]["expensive"]), (17.0, False))
+        self.assertEqual(row[ts("2026-11-13T18:00")]["target"], 21.0)
+        self.assertEqual(row[ts("2026-11-13T09:00")]["target"], 16.0)
+        changes = [r["t"] for prev, r in zip(plan["slots"], plan["slots"][1:]) if r["target"] != prev["target"]]
+        self.assertNotIn(ts("2026-11-13T18:00"), changes)
+
+    def test_running_expensive_period_keeps_its_length_after_now(self):
+        prices = with_range(flat_prices(value=1.2), ts("2026-11-13T09:00"), ts("2026-11-13T10:00"), 3.0)
+        plan = build_plan(validate({}), prices, ts("2026-11-13T09:40"), TZ, current_temp=18.0)
+        self.assertEqual((plan["slots"][0]["target"], plan["slots"][0]["expensive"]), (16.0, True))
+
+    def test_expensive_run_at_end_of_known_prices_is_kept(self):
+        prices = [p for p in flat_prices(value=1.2) if p[0] < ts("2026-11-14T00:00")]
+        prices = with_range(prices, ts("2026-11-13T23:30"), ts("2026-11-14T00:00"), 3.0)
+        plan = build_plan(validate({}), prices, ts("2026-11-13T20:00"), TZ, current_temp=18.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertTrue(row[ts("2026-11-13T23:30")]["expensive"])
+
+    def test_short_cheap_boost_is_ignored(self):
+        config = validate({"cheap_boost_below": 0.4})
+        prices = with_range(flat_prices(value=1.0), ts("2026-11-13T11:00"), ts("2026-11-13T11:30"), 0.2)
+        plan = build_plan(config, prices, ts("2026-11-13T08:00"), TZ, current_temp=21.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual(row[ts("2026-11-13T11:00")]["target"], 17.0)
+
     def test_next_change(self):
         plan = build_plan(validate({}), flat_prices(), ts("2026-11-13T12:00"), TZ, current_temp=18.0)
         self.assertEqual(next_change(plan)["t"], ts("2026-11-13T13:30"))
@@ -290,6 +322,61 @@ class ControllerTest(unittest.TestCase):
         self.ha.climate = {"state": "unavailable", "attributes": {}}
         self.controller.tick(ts("2026-11-13T14:00"))
         self.assertEqual(self.writes(), [])
+
+    def test_thermostat_that_ignores_writes_backs_off(self):
+        self.controller.save_settings({"enabled": True})
+        real = self.ha.service
+
+        def ignoring(domain, name, data, response=False):
+            if domain != "climate":
+                return real(domain, name, data, response)
+            self.ha.calls.append((domain, name, data))  # accepted by HA, never stored by the thermostat
+            return []
+        self.ha.service = ignoring
+        start = ts("2026-11-13T14:00")
+        for minute in range(0, 60):
+            self.controller.tick(start + minute * 60)
+        # three tries five minutes apart (0, 5, 10), then only every 30 minutes (40)
+        self.assertEqual(len(self.writes()), 4)
+        self.assertIn("inte tagit emot 21,0", self.controller.status["error"])
+        errors = [e for e in self.controller.events.rows if e["kind"] == "error"]
+        self.assertEqual(len(errors), 1)
+        self.ha.climate = {**self.ha.climate, "state": "heat",
+                           "attributes": {**self.ha.climate["attributes"], "temperature": 21.0}}
+        self.controller.tick(start + 3600)
+        self.assertIsNone(self.controller.unconfirmed)
+        self.assertNotIn("error", self.controller.status)
+
+    def test_unreadable_thermostat_is_published(self):
+        self.controller.tick(ts("2026-11-13T14:00"))
+        self.ha.state = lambda entity_id: (_ for _ in ()).throw(app.HaError("nere"))
+        self.ha.calls.clear()
+        self.controller.tick(ts("2026-11-13T14:01"))
+        published = {c[1]: c[2]["state"] for c in self.ha.calls if c[0] == "request"}
+        self.assertEqual(published["/states/sensor.golvvarme_comfort_status"], "Väntar")
+
+    def test_events_use_decimal_comma(self):
+        self.controller.save_settings({"enabled": True})
+        self.controller.tick(ts("2026-11-13T14:00"))
+        self.assertTrue(self.controller.events.recent(1)[0]["message"].startswith("21,0 °C"))
+
+    def test_too_large_request_is_rejected(self):
+        import threading
+        from http.server import ThreadingHTTPServer
+        from urllib.error import HTTPError
+        from urllib.request import Request, urlopen
+        server = ThreadingHTTPServer(("127.0.0.1", 0), app.handler_for(self.controller, open_access=True))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        body = json.dumps({"comfort_temp": 22.0, "x": "a" * 20000}).encode()
+        request = Request(f"http://127.0.0.1:{server.server_port}/api/settings", data=body, method="POST",
+                          headers={"Content-Type": "application/json"})
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request, timeout=3)
+        self.assertEqual(caught.exception.code, 413)
+        caught.exception.close()
+        self.assertEqual(self.controller.config["comfort_temp"], 21.0)
 
     def test_conflict_reported(self):
         self.ha.automation_on = True

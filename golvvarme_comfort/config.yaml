@@ -1,5 +1,5 @@
 name: Golvvärme Comfort
-version: "0.3.0"
+version: "0.4.0"
 slug: golvvarme_comfort
 description: Elgolvvärme efter elpris (Tibber eller Nord Pool) – förvärmer billigt inför komforttider och sänker vid dyr el
 url: https://github.com/peterwreiber/golvvarme-comfort

@@ -1,7 +1,7 @@
-:root{color-scheme:light;--ink:#18352f;--muted:#5d706b;--green:#146c50;--line:#dde7df;--paper:#fff;--bg:#f3f6f1;--hero:#18352f;--warm:#d9573b;--blue:#4269bb;--orange:#bd671c;--field:#fafcf9;--fieldline:#c7d5cb;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+:root{color-scheme:light;--ink:#18352f;--muted:#5d706b;--green:#146c50;--line:#dde7df;--paper:#fff;--bg:#f3f6f1;--hero:#18352f;--warm:#d9573b;--blue:#4269bb;--orange:#bd671c;--amber:#d99a0b;--field:#fafcf9;--fieldline:#c7d5cb;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 [hidden]{display:none!important}
-@media(prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--ink:#e3ece7;--muted:#9fb2aa;--green:#4cc08f;--line:#2f3b37;--paper:#1c2321;--bg:#111614;--hero:#0f2a22;--warm:#ef8a6f;--blue:#7ea2ef;--orange:#f0a35c;--field:#141a18;--fieldline:#3a4a44}}
-:root[data-theme=dark]{color-scheme:dark;--ink:#e3ece7;--muted:#9fb2aa;--green:#4cc08f;--line:#2f3b37;--paper:#1c2321;--bg:#111614;--hero:#0f2a22;--warm:#ef8a6f;--blue:#7ea2ef;--orange:#f0a35c;--field:#141a18;--fieldline:#3a4a44}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--ink:#e3ece7;--muted:#9fb2aa;--green:#4cc08f;--line:#2f3b37;--paper:#1c2321;--bg:#111614;--hero:#0f2a22;--warm:#ef8a6f;--blue:#7ea2ef;--orange:#f0a35c;--amber:#f2c14e;--field:#141a18;--fieldline:#3a4a44}}
+:root[data-theme=dark]{color-scheme:dark;--ink:#e3ece7;--muted:#9fb2aa;--green:#4cc08f;--line:#2f3b37;--paper:#1c2321;--bg:#111614;--hero:#0f2a22;--warm:#ef8a6f;--blue:#7ea2ef;--orange:#f0a35c;--amber:#f2c14e;--field:#141a18;--fieldline:#3a4a44}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);line-height:1.5;overflow-wrap:anywhere}
 header,main{max-width:1100px;margin:auto;padding:24px}
@@ -29,15 +29,15 @@ p{color:var(--muted);font-size:14px;margin:8px 0 16px}
 .line{fill:none;stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
 .series-0{stroke:var(--green);color:var(--green)}.series-1{stroke:var(--orange);color:var(--orange)}.series-2{stroke:var(--blue);color:var(--blue)}
 .line.dashed{stroke-dasharray:7 5}.now-line{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:3 4}
-.band-comfort{fill:var(--green);opacity:.12}.band-preheat{fill:var(--warm);opacity:.16}
+.band-comfort{fill:var(--green);opacity:.12}.band-preheat{fill:var(--amber);opacity:.2}
 .bar{fill:var(--muted);opacity:.28}.bar.expensive{fill:var(--warm);opacity:.6}
 .chart-legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;margin-top:8px}
 .legend-item:before{content:"";display:inline-block;width:16px;border-top:3px solid currentColor;margin-right:6px;vertical-align:middle}.legend-item.dashed:before{border-top-style:dashed}
-.key{font-weight:600}.key.comfort{color:var(--green)}.key.preheat{color:var(--warm)}.key.expensive{color:var(--warm);opacity:.75}
+.key{font-weight:600}.key.comfort{color:var(--green)}.key.preheat{color:var(--amber)}.key.expensive{color:var(--warm);opacity:.75}
 .metrics{display:grid;grid-template-columns:1fr 1fr 2fr;gap:14px;margin-top:20px}
 .metrics>div{border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
 .metrics span{font-size:12px;color:var(--muted);display:block}.metrics strong{font-size:24px;display:block;margin:4px 0;font-variant-numeric:tabular-nums}.metrics small{color:var(--muted);font-size:12px}
-.changes{list-style:none;padding:0;margin:6px 0 0;font-size:13px;max-height:160px;overflow:auto}.changes li{padding:4px 0 4px 10px;border-left:3px solid var(--line);margin:3px 0}.changes li.preheat{border-color:var(--warm)}.changes li.comfort{border-color:var(--green)}.changes li.low{border-color:var(--blue)}
+.changes{list-style:none;padding:0;margin:6px 0 0;font-size:13px}.changes li{padding:4px 0 4px 10px;border-left:3px solid var(--line);margin:3px 0}.changes li.preheat{border-color:var(--amber)}.changes li.comfort{border-color:var(--green)}.changes li.low{border-color:var(--blue)}
 label{font-size:13px;font-weight:650;display:block;margin:12px 0 4px}label small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:4px}
 input,select,button{font:inherit}
 input[type=number],input[type=time],select{display:block;width:100%;min-width:0;margin-top:6px;background:var(--field);border:1px solid var(--fieldline);border-radius:9px;padding:10px 12px;color:var(--ink)}
