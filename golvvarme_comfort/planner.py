@@ -22,6 +22,7 @@ DEFAULTS = {
     ],
     "heatup_rate": 1.0,
     "cooldown_rate": 0.45,
+    "learn_rates": False,
     "max_preheat_hours": 3.0,
     "holding_share": 0.3,
     "expensive_mode": "relative",
@@ -66,6 +67,8 @@ def validate(raw):
     config = {**DEFAULTS, **raw}
     if not isinstance(config["enabled"], bool):
         raise PlanError("Styr termostaten måste vara på eller av.")
+    if not isinstance(config["learn_rates"], bool):
+        raise PlanError("Inlärda takter måste vara på eller av.")
     for key, prefix in (("climate_entity", "climate."), ("price_entity", "sensor."), ("conflict_automation", "automation.")):
         value = config[key]
         if not isinstance(value, str) or (value and not value.startswith(prefix)):
@@ -347,6 +350,51 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
             if start <= row["t"] < a and row["target"] < goal:
                 row["target"], row["reason"] = goal, f"Förvärmer inför {label}"
     return {"slots": plan, "preheats": preheats, "windows": windows}
+
+
+def learn_rates(points, min_minutes=45, min_runs=3):
+    """Heat-up and cool-down rates (°C/h) measured from the thermostat's own history.
+
+    points: [{t, current, target, heating}] in time order. A heating run gives a heat-up rate when the
+    floor rose; an idle run with the target at least 0.5 °C below the floor gives a cool-down rate.
+    Runs shorter than min_minutes or moving less than 0.5 °C are skipped (0.5 °C readings). The median of each needs min_runs runs."""
+    runs, current = [], None
+    for point in points:
+        if point.get("current") is None:
+            current = None
+            continue
+        if current is None or point["heating"] != current["heating"]:
+            current = {"heating": point["heating"], "first": point, "last": point}
+            runs.append(current)
+        else:
+            current["last"] = point
+    heat, cool = [], []
+    for run in runs:
+        first, last = run["first"], run["last"]
+        hours = (last["t"] - first["t"]) / 3600
+        if hours * 60 < min_minutes:
+            continue
+        change = last["current"] - first["current"]
+        rate = change / hours
+        # Holding at the target cycles the heater with a flat floor; only real warm-ups and cool-downs count.
+        if abs(change) < 0.5:
+            continue
+        if run["heating"] and rate > 0:
+            heat.append(rate)
+        elif not run["heating"] and rate < 0 and first.get("target") is not None and first["target"] <= first["current"] - 0.5:
+            cool.append(-rate)
+    median = lambda values: sorted(values)[len(values) // 2] if len(values) >= min_runs else None
+    heatup, cooldown = median(heat), median(cool)
+    return {"heatup_rate": None if heatup is None else round(min(10.0, max(0.1, heatup)), 2),
+            "cooldown_rate": None if cooldown is None else round(min(5.0, cooldown), 2),
+            "heat_runs": len(heat), "cool_runs": len(cool)}
+
+
+def effective(config, learned):
+    """Settings with learned rates in place of the typed ones when learning is on and a rate is known."""
+    if not config.get("learn_rates") or not learned:
+        return config
+    return {**config, **{key: learned[key] for key in ("heatup_rate", "cooldown_rate") if learned.get(key) is not None}}
 
 
 def next_change(plan):

@@ -57,6 +57,11 @@ function renderStatus(s) {
   $("next-target").textContent = s.next_change ? temp(s.next_change.target) : "–";
   $("next-when").textContent = s.next_change ? `${when(s.next_change.t)} · ${s.next_change.reason}` : "Ingen ändring i planen";
   $("conflict").hidden = !(s.conflict && s.enabled);
+  const lr = s.learned_rates;
+  const rate = (v) => (v == null ? "för lite underlag" : `${String(v).replace(".", ",")} °C/h`);
+  $("learned-rates").textContent = lr
+    ? `Inlärt ur termostatens historik: uppvärmning ${rate(lr.heatup_rate)} (${lr.heat_runs} gånger), avsvalning ${rate(lr.cooldown_rate)} (${lr.cool_runs} gånger).${lr.in_use ? " Används i planen där de är kända." : " Används inte – värdena ovan gäller."}`
+    : "Mäts ur termostatens historik (värmer/vilar) de senaste 10 dygnen. Värdena ovan gäller tills det finns minst tre uppvärmningar och tre avsvalningar.";
   if (s.conflict) $("conflict-text").textContent = `”${s.conflict.name}” ändrar också termostaten efter elpriset. Stäng av den så att de inte krockar.`;
   if (s.version) $("version").textContent = `Golvvärme Comfort ${s.version}`;
   renderChanges(s.plan);
@@ -243,6 +248,7 @@ function fillSelect(id, items, value, emptyLabel) {
 
 function renderSettings(s, entities) {
   settings = s;
+  $("learn_rates").checked = s.learn_rates;
   $("enabled").checked = s.enabled;
   NUMBERS.forEach((k) => { $(k).value = s[k]; });
   $("expensive_mode").value = s.expensive_mode;
@@ -261,7 +267,7 @@ function modeFields() {
 }
 
 function collect() {
-  const value = { enabled: $("enabled").checked };
+  const value = { enabled: $("enabled").checked, learn_rates: $("learn_rates").checked };
   NUMBERS.forEach((k) => { value[k] = Number($(k).value); });
   SELECTS.forEach((k) => { value[k] = $(k).value; });
   value.comfort_periods = [...document.querySelectorAll(".period")].map((row) => ({

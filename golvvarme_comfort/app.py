@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from planner import DEFAULTS, PlanError, build_plan, next_change, price_at, vacation_bounds, validate
+from planner import DEFAULTS, PlanError, build_plan, effective, learn_rates, next_change, price_at, vacation_bounds, validate
 from prices import LABELS as PRICE_LABELS, PriceError, load_prices
 
 LOG = logging.getLogger("golvvarme_comfort")
@@ -28,6 +28,10 @@ UNCONFIRMED_LIMIT = 3
 UNCONFIRMED_RETRY_SECONDS = 1800
 PRICE_CACHE_SECONDS = 900
 MAX_BODY = 16384
+# Heat-up and cool-down rates are measured again from this much thermostat history this often.
+RATE_HISTORY_DAYS = 10
+RATE_REFRESH_SECONDS = 6 * 3600
+RATE_RETRY_SECONDS = 1800
 
 
 class HaError(Exception):
@@ -171,6 +175,33 @@ class Controller:
         self.status = {"message": "Startar…"}
         self.plan = None
         self.summary_cache = (0, None)
+        self.learned, self.learned_at, self.learned_for = None, 0, None
+
+    def refresh_rates(self, now):
+        """Measure heat-up and cool-down from the thermostat's history; outside the lock, at most every few hours."""
+        with self.lock:
+            entity = self.config["climate_entity"]
+            due = self.learned_for != entity or now - self.learned_at >= (RATE_REFRESH_SECONDS if self.learned else RATE_RETRY_SECONDS)
+        if not entity or not due:
+            return
+        try:
+            rows = self.ha.history(entity, now - RATE_HISTORY_DAYS * 86400, now)
+            points = []
+            for row in rows:
+                try:
+                    a = row.get("attributes", {})
+                    points.append({"t": parse_time(row["last_changed"]), "current": number_or_none(a.get("current_temperature")),
+                                   "target": number_or_none(a.get("temperature")), "heating": a.get("hvac_action") == "heating"})
+                except (KeyError, ValueError):
+                    continue
+            learned = learn_rates(sorted(points, key=lambda p: p["t"]))
+        except HaError as exc:
+            LOG.warning("Historiken för inlärda takter kunde inte läsas: %s", exc)
+            learned = None
+        with self.lock:
+            if learned or self.learned_for != entity:
+                self.learned = learned
+            self.learned_at, self.learned_for = now, entity
 
     def load_settings(self):
         try:
@@ -261,6 +292,7 @@ class Controller:
 
     def tick(self, now=None):
         now = time.time() if now is None else now
+        self.refresh_rates(now)
         with self.lock:
             try:
                 self.end_vacation_if_over(now)
@@ -307,7 +339,8 @@ class Controller:
                     self.hand_back(config["climate_entity"], "Elpriser saknas")
                 self.set_status(status)
                 return
-            plan = build_plan(config, prices, now, self.zone(), current, committed_preheat=self.committed)
+            status["learned_rates"] = self.learned and {**self.learned, "in_use": bool(config["learn_rates"])}
+            plan = build_plan(effective(config, self.learned), prices, now, self.zone(), current, committed_preheat=self.committed)
             for item in plan["preheats"]:
                 if item["start"] <= now < item["comfort_start"]:
                     self.committed[item["comfort_start"]] = item["start"]

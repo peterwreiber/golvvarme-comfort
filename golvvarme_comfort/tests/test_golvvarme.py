@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import app  # noqa: E402
 import prices  # noqa: E402
-from planner import PlanError, build_plan, comfort_windows, next_change, validate  # noqa: E402
+from planner import PlanError, build_plan, comfort_windows, effective, learn_rates, next_change, validate  # noqa: E402
 
 TZ = ZoneInfo("Europe/Stockholm")
 ENTITIES = {"climate_entity": "climate.golvvarme", "price_entity": "sensor.elpris",
@@ -222,6 +222,10 @@ class FakeHA:
         self.automation_on = False
         self.fail_prices = False
         self.store_step = None  # thermostat that rounds stored setpoints to this step
+        self.history_rows = []
+
+    def history(self, entity_id, start, end):
+        return self.history_rows
 
     def state(self, entity_id):
         if entity_id.startswith("automation."):
@@ -265,6 +269,48 @@ class FakeHA:
         self.calls.append(("request", path, data))
         return {}
 
+def run(start, minutes, temps, heating, target):
+    """Readings every 15 minutes from start, linearly between temps[0] and temps[1]."""
+    steps = minutes // 15
+    return [{"t": start + k * 900, "current": round(temps[0] + (temps[1] - temps[0]) * k / steps, 1),
+             "target": target, "heating": heating} for k in range(steps + 1)]
+
+
+class LearnedRatesTest(unittest.TestCase):
+    def history(self):
+        points, t = [], 1_800_000_000
+        for _ in range(4):
+            points += run(t, 120, (17.0, 19.4), True, 21)      # 1.2 °C/h warm-up
+            t += 120 * 60 + 60
+            points += run(t, 240, (19.4, 17.6), False, 16)     # 0.45 °C/h cool-down
+            t += 240 * 60 + 60
+            for k in range(4):                                  # holding: short on/off cycles, flat floor
+                points += run(t, 15, (17.6, 17.6), k % 2 == 0, 17.5)
+                t += 15 * 60 + 60
+        return points
+
+    def test_rates_are_medians_of_real_warm_ups_and_cool_downs(self):
+        learned = learn_rates(self.history())
+        self.assertEqual((learned["heatup_rate"], learned["cooldown_rate"]), (1.2, 0.45))
+        self.assertEqual((learned["heat_runs"], learned["cool_runs"]), (4, 4))
+
+    def test_short_or_few_runs_teach_nothing(self):
+        few = learn_rates(self.history()[:30])
+        self.assertIsNone(few["heatup_rate"])
+        self.assertIsNone(learn_rates(run(1_800_000_000, 30, (17, 19), True, 21))["heatup_rate"])
+        # Idle with the target above the floor is not a cool-down (the thermostat would heat).
+        self.assertIsNone(learn_rates(run(1_800_000_000, 240, (19, 17), False, 21) * 3)["cooldown_rate"])
+
+    def test_learned_rates_only_used_when_chosen(self):
+        config = validate({})
+        learned = {"heatup_rate": 1.5, "cooldown_rate": None}
+        self.assertIs(effective(config, learned), config)
+        on = effective({**config, "learn_rates": True}, learned)
+        self.assertEqual((on["heatup_rate"], on["cooldown_rate"]), (1.5, config["cooldown_rate"]))
+        with self.assertRaises(PlanError):
+            validate({"learn_rates": "ja"})
+
+
 class ControllerTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -277,6 +323,22 @@ class ControllerTest(unittest.TestCase):
 
     def writes(self):
         return [c for c in self.ha.calls if c[0] == "climate"]
+
+    def test_learned_rates_reach_the_status_and_the_plan(self):
+        self.ha.history_rows = [{"last_changed": datetime.fromtimestamp(p["t"]).astimezone().isoformat(),
+                                 "attributes": {"current_temperature": p["current"], "temperature": p["target"],
+                                                "hvac_action": "heating" if p["heating"] else "idle"}}
+                                for p in LearnedRatesTest().history()]
+        self.controller.tick(ts("2026-11-13T14:00"))
+        self.assertEqual(self.controller.status["learned_rates"]["heatup_rate"], 1.2)
+        self.assertFalse(self.controller.status["learned_rates"]["in_use"])
+        self.controller.save_settings({"learn_rates": True})
+        self.controller.tick(ts("2026-11-13T14:01"))
+        self.assertTrue(self.controller.status["learned_rates"]["in_use"])
+        # Read again only after the refresh interval.
+        self.ha.history_rows = []
+        self.controller.tick(ts("2026-11-13T15:00"))
+        self.assertEqual(self.controller.status["learned_rates"]["heatup_rate"], 1.2)
 
     def test_dry_run_never_writes(self):
         self.controller.tick(ts("2026-11-13T14:00"))

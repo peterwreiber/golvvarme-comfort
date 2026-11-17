@@ -26,7 +26,7 @@ Har du en egen automation som redan styr termostaten efter elpriset kan du ange 
 
 ## Tips
 
-- **Uppvärmningstakt** och **avsvalning** (°C/h) avgör när förvärmningen börjar. Är golvet kallt när komforttiden börjar, sänk uppvärmningstakten eller höj längsta förvärmning.
+- **Uppvärmningstakt** och **avsvalning** (°C/h) avgör när förvärmningen börjar. Med **Använd inlärda takter** mäts de ur termostatens egen historik (värmer/vilar, senaste 10 dygnen) och ersätter de inskrivna värdena när det finns minst tre av varje. Är golvet kallt när komforttiden börjar, sänk uppvärmningstakten eller höj längsta förvärmning.
 - Den officiella Nord Pool-integrationen ger spotpris utan skatt och nätavgift. Sätt därför gränsen för dyr el lägre än för Tibber.
 - Effekten (kW) används bara för att uppskatta kostnaden.
 

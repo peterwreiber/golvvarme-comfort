@@ -97,6 +97,7 @@
           <div class="field-grid">
             <label>Uppvärmningstakt (°C/h)<input type="number" step="0.1" id="heatup_rate"><small>Hur fort golvet blir varmt. Uppmätt ~1 °C/h.</small></label>
             <label>Avsvalning (°C/h)<input type="number" step="0.05" id="cooldown_rate"><small>Hur fort golvet svalnar när det inte värms. Uppmätt ~0,45 °C/h.</small></label>
+            <label class="toggle"><input type="checkbox" id="learn_rates"> Använd inlärda takter<small id="learned-rates" style="flex-basis:100%">Mäts ur termostatens historik (värmer/vilar) de senaste 10 dygnen. Värdena ovan gäller tills det finns minst tre uppvärmningar och tre avsvalningar.</small></label>
             <label>Längsta förvärmning (h)<input type="number" step="0.5" id="max_preheat_hours"></label>
             <label>Hålleffekt (0–1)<input type="number" step="0.05" id="holding_share"><small>Andel av tiden golvet värmer för att hålla temperaturen.</small></label>
             <label>Effekt (kW)<input type="number" step="0.1" id="power_kw"><small>Uppskattad, används bara för kronor.</small></label>
