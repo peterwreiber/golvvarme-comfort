@@ -17,10 +17,12 @@ from zoneinfo import ZoneInfo
 
 from planner import DEFAULTS, PlanError, build_plan, effective, learn_rates, next_change, price_at, vacation_bounds, validate
 from prices import LABELS as PRICE_LABELS, PriceError, load_prices
+from community import Community
 
 LOG = logging.getLogger("golvvarme_comfort")
 STATIC = Path(__file__).parent / "static"
 VERSION = os.environ.get("GOLVVARME_VERSION", "dev")
+COMMUNITY = Community("https://raw.githubusercontent.com/peterwreiber/golvvarme-comfort/stats/anvandare.json")
 # A cloud thermostat: never write more often than this, except when handing control back.
 MIN_WRITE_SECONDS = 300
 # After this many writes that the thermostat did not take, retry only every UNCONFIRMED_RETRY_SECONDS.
@@ -543,6 +545,8 @@ def handler_for(controller, open_access=False):
                     self.respond(200, controller.snapshot())
                 elif path == "/api/settings":
                     self.respond(200, controller.config)
+                elif path == "/api/community":
+                    self.respond(200, {"community": COMMUNITY.get()})
                 elif path == "/api/defaults":
                     self.respond(200, DEFAULTS)
                 elif path == "/api/history":

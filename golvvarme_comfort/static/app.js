@@ -184,8 +184,8 @@ function renderHistory(h) {
   show(h.today, "today-hours", "today-cost");
   show(h.last24, "day-hours", "day-cost");
   // Same kWh at the day's average price minus what they cost: a gain from timing, not from using less.
-  const shift = h.last24 && h.last24.price_shift;
-  $("shift-label").textContent = shift && shift.difference < 0 ? "Dyrare än snittpris · 24 h" : "Tjänat på prisflytt · 24 h";
+  const shift = h.today && h.today.price_shift;
+  $("shift-label").textContent = shift && shift.difference < 0 ? "Dyrare än snittpris idag" : "Tjänat på prisflytt idag";
   $("shift-value").textContent = shift ? kr(Math.abs(shift.difference)) : "–";
   $("shift-detail").textContent = shift
     ? `Snitt ${kr(shift.average_price)}/kWh, golvet ${kr(shift.actual_price)}/kWh${shift.complete ? "" : " · priser saknas för en del"}`
@@ -360,6 +360,13 @@ async function refresh() {
   }
 }
 
+// Installations according to the maintainer's published GitHub clone statistics; nothing is sent from here.
+function communityText(community) {
+  if (!community) return "";
+  const n = community.installations;
+  return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
+}
+
 async function init() {
   try {
     const [s, entities] = await Promise.all([api("api/settings"), api("api/entities").catch(() => ({}))]);
@@ -388,6 +395,7 @@ async function init() {
     try { await api("api/disable-conflict", {}); notice("Automationen är avstängd."); refresh(); } catch (e) { notice(e.message, true); }
   };
   refresh();
+  api("api/community").then((d) => { const t = communityText(d.community); $("community").textContent = t ? `· ${t}` : ""; }).catch(() => {});
   setInterval(refresh, 60000);
 }
 
