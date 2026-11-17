@@ -462,7 +462,23 @@ class ControllerTest(unittest.TestCase):
         rows = [{"last_changed": "2026-11-13T10:00:00+01:00", "attributes": {"hvac_action": "heating"}},
                 {"last_changed": "2026-11-13T11:30:00+01:00", "attributes": {"hvac_action": "idle"}}]
         result = app.heating_summary(rows, flat_prices(value=2.0), 1.0, ts("2026-11-13T00:00"), ts("2026-11-13T12:00"))
-        self.assertEqual(result, {"hours": 1.5, "kwh": 1.5, "cost": 3.0})
+        self.assertEqual({k: result[k] for k in ("hours", "kwh", "cost")}, {"hours": 1.5, "kwh": 1.5, "cost": 3.0})
+        self.assertEqual(result["price_shift"]["difference"], 0)
+        self.assertTrue(result["price_shift"]["complete"])
+
+    def test_heating_summary_price_shift(self):
+        # 1 kr before 06, 3 kr after: average 2 kr over 00-12. Heating 2 h at night saves 2 kr, 2 h by day costs 2 kr more.
+        prices = [(ts("2026-11-13T00:00") + i * 3600, 1.0 if i < 6 else 3.0) for i in range(12)]
+        night = [{"last_changed": "2026-11-13T02:00:00+01:00", "attributes": {"hvac_action": "heating"}},
+                 {"last_changed": "2026-11-13T04:00:00+01:00", "attributes": {"hvac_action": "idle"}}]
+        shift = app.heating_summary(night, prices, 1.0, ts("2026-11-13T00:00"), ts("2026-11-13T12:00"))["price_shift"]
+        self.assertAlmostEqual(shift["average_price"], 2.0)
+        self.assertAlmostEqual(shift["actual_price"], 1.0)
+        self.assertAlmostEqual(shift["difference"], 2.0)
+        day = [{"last_changed": "2026-11-13T08:00:00+01:00", "attributes": {"hvac_action": "heating"}},
+               {"last_changed": "2026-11-13T10:00:00+01:00", "attributes": {"hvac_action": "idle"}}]
+        self.assertAlmostEqual(app.heating_summary(day, prices, 1.0, ts("2026-11-13T00:00"), ts("2026-11-13T12:00"))["price_shift"]["difference"], -2.0)
+        self.assertIsNone(app.heating_summary(night, [], 1.0, ts("2026-11-13T00:00"), ts("2026-11-13T12:00"))["price_shift"])
 
     def test_thermostat_without_auto_gets_fallback_temperature(self):
         self.ha.climate["attributes"]["hvac_modes"] = ["heat", "off"]

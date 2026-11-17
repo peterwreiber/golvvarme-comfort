@@ -108,8 +108,13 @@ def setpoint(caps, value):
 
 
 def heating_summary(rows, prices, power_kw, start, end):
-    """Hours with hvac_action heating in [start, end) and their estimated cost at power_kw."""
-    hours = cost = 0.0
+    """Hours with hvac_action heating in [start, end) and their estimated cost at power_kw.
+
+    price_shift is what the priced kWh would have cost at the period's time-weighted average
+    price minus what they cost: positive when the floor heated in the cheaper hours. It is a
+    gain from timing, not from using less, and None when prices are missing.
+    """
+    hours = cost = priced_hours = 0.0
     timeline = []
     for row in rows:
         try:
@@ -127,8 +132,26 @@ def heating_summary(rows, prices, power_kw, start, end):
             price = price_at(prices, a)
             if price is not None:
                 cost += price * power_kw * (step - a) / 3600
+                priced_hours += (step - a) / 3600
             a = step
-    return {"hours": round(hours, 2), "kwh": round(hours * power_kw, 2), "cost": round(cost, 2)}
+    weighted = seconds = 0.0
+    a = start
+    while a < end:
+        step = min(end, a - a % 900 + 900)
+        price = price_at(prices, a)
+        if price is not None:
+            weighted += price * (step - a)
+            seconds += step - a
+        a = step
+    average = weighted / seconds if seconds else None
+    priced_kwh = priced_hours * power_kw
+    shift = None
+    if average is not None and priced_kwh > 0:
+        shift = {"average_price": round(average, 3), "actual_price": round(cost / priced_kwh, 3),
+                 "kwh": round(priced_kwh, 2), "average_cost": round(priced_kwh * average, 2),
+                 "difference": round(priced_kwh * average - cost, 2),
+                 "complete": math.isclose(priced_hours, hours, abs_tol=0.01) and math.isclose(seconds, end - start, abs_tol=1)}
+    return {"hours": round(hours, 2), "kwh": round(hours * power_kw, 2), "cost": round(cost, 2), "price_shift": shift}
 
 
 class EventLog:

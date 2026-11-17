@@ -183,6 +183,13 @@ function renderHistory(h) {
   };
   show(h.today, "today-hours", "today-cost");
   show(h.last24, "day-hours", "day-cost");
+  // Same kWh at the day's average price minus what they cost: a gain from timing, not from using less.
+  const shift = h.last24 && h.last24.price_shift;
+  $("shift-label").textContent = shift && shift.difference < 0 ? "Dyrare än snittpris · 24 h" : "Tjänat på prisflytt · 24 h";
+  $("shift-value").textContent = shift ? kr(Math.abs(shift.difference)) : "–";
+  $("shift-detail").textContent = shift
+    ? `Snitt ${kr(shift.average_price)}/kWh, golvet ${kr(shift.actual_price)}/kWh${shift.complete ? "" : " · priser saknas för en del"}`
+    : "Kräver elpriser för perioden";
 }
 
 const pad = (n) => String(n).padStart(2, "0");

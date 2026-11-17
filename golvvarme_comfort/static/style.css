@@ -34,7 +34,7 @@ p{color:var(--muted);font-size:14px;margin:8px 0 16px}
 .chart-legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;margin-top:8px}
 .legend-item:before{content:"";display:inline-block;width:16px;border-top:3px solid currentColor;margin-right:6px;vertical-align:middle}.legend-item.dashed:before{border-top-style:dashed}
 .key{font-weight:600}.key.comfort{color:var(--green)}.key.preheat{color:var(--amber)}.key.expensive{color:var(--warm);opacity:.75}
-.metrics{display:grid;grid-template-columns:1fr 1fr 2fr;gap:14px;margin-top:20px}
+.metrics{display:grid;grid-template-columns:1fr 1fr 1fr 2fr;gap:14px;margin-top:20px}
 .metrics>div{border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
 .metrics span{font-size:12px;color:var(--muted);display:block}.metrics strong{font-size:24px;display:block;margin:4px 0;font-variant-numeric:tabular-nums}.metrics small{color:var(--muted);font-size:12px}
 .changes{list-style:none;padding:0;margin:6px 0 0;font-size:13px}.changes li{padding:4px 0 4px 10px;border-left:3px solid var(--line);margin:3px 0}.changes li.preheat{border-color:var(--amber)}.changes li.comfort{border-color:var(--green)}.changes li.low{border-color:var(--blue)}
