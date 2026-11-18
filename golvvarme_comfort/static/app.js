@@ -2,8 +2,9 @@
 const $ = (id) => document.getElementById(id);
 const DAYS = ["Mån", "Tis", "Ons", "Tor", "Fre", "Lör", "Sön"];
 const NUMBERS = ["comfort_temp", "economy_temp", "setback_temp", "comfort_reduction", "expensive_percent", "expensive_min_price",
-  "expensive_price", "cheap_boost_below", "heatup_rate", "cooldown_rate", "max_preheat_hours", "holding_share", "power_kw", "fallback_temp"];
-const SELECTS = ["expensive_mode", "climate_entity", "price_entity", "conflict_automation"];
+  "expensive_price", "cheap_boost_below", "heatup_rate", "cooldown_rate", "max_preheat_hours", "holding_share", "power_kw", "fallback_temp",
+  "presence_grace_minutes", "presence_long_away_hours"];
+const SELECTS = ["expensive_mode", "climate_entity", "price_entity", "conflict_automation", "presence_entity"];
 let settings = null;
 let dirty = false;
 
@@ -256,12 +257,14 @@ function fillSelect(id, items, value, emptyLabel) {
 function renderSettings(s, entities) {
   settings = s;
   $("learn_rates").checked = s.learn_rates;
+  $("price_aware_preheat").checked = s.price_aware_preheat;
   $("enabled").checked = s.enabled;
   NUMBERS.forEach((k) => { $(k).value = s[k]; });
   $("expensive_mode").value = s.expensive_mode;
   fillSelect("climate_entity", entities.climate || [], s.climate_entity, s.climate_entity ? "" : "Välj termostat…");
   fillSelect("price_entity", entities.price || [], s.price_entity, s.price_entity ? "" : "Välj elprisgivare…");
   fillSelect("conflict_automation", entities.automation || [], s.conflict_automation, "Ingen");
+  fillSelect("presence_entity", entities.presence || [], s.presence_entity, "Av");
   $("periods").replaceChildren(...s.comfort_periods.map(periodRow));
   renderVacation(s.vacation);
   modeFields();
@@ -274,7 +277,8 @@ function modeFields() {
 }
 
 function collect() {
-  const value = { enabled: $("enabled").checked, learn_rates: $("learn_rates").checked };
+  const value = { enabled: $("enabled").checked, learn_rates: $("learn_rates").checked,
+    price_aware_preheat: $("price_aware_preheat").checked };
   NUMBERS.forEach((k) => { value[k] = Number($(k).value); });
   SELECTS.forEach((k) => { value[k] = $(k).value; });
   value.comfort_periods = [...document.querySelectorAll(".period")].map((row) => ({

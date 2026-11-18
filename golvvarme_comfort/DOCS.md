@@ -7,6 +7,8 @@ Home Assistant-tillägg som styr elektrisk golvvärme efter elpriset. Du anger n
 - **Komforttider** per veckodag (24-timmarsklocka). Övrig tid hålls en ekonomitemperatur.
 - **Förvärmning** inför varje komforttid, med start när det blir billigast. Bygger på golvets uppvärmnings- och avsvalningstakt.
 - **Dyr el:** sänkt temperatur utanför komforttid och valfri liten sänkning under komforttid. Dyrt räknas antingen relativt (dygnets dyraste del) eller över ett fast pris. Dyra eller billiga perioder kortare än en timme räknas inte, eftersom golvet håller värmen längre än så och varje ändring kostar anrop till termostaten.
+- **Dyr förvärmning:** måste golvet värmas under dygnets dyra timmar för att nå komforttiden, sänks komfortmålet med samma steg som vid dyr el. Förvärmningen blir då kortare. Kan stängas av.
+- **Närvaro (valfri):** välj en person, zon, grupp eller närvarogivare. Är ingen hemma (efter en marginal, standard 15 minuter) förvärms inte golvet och komforttiden blir ekonomi. Efter lång bortavaro (standard 4 timmar) gäller sänkt temperatur. Närvaron kan bara sänka: ett golv tar 1–3 timmar att värma, så när någon kommer hem gäller planen direkt men golvet blir varmt först efter en stund. Okänd eller otillgänglig närvaro räknas som hemma.
 - **Billig el:** valfri extra värme under ett visst pris.
 - **Semesterläge:** komforttiderna pausas och golvet hålls på en semestertemperatur. Före hemkomsten förvärms golvet, och semesterläget stängs av automatiskt efteråt.
 - **Elpris från Tibber eller Nord Pool**, både den officiella integrationen och HACS-varianten.

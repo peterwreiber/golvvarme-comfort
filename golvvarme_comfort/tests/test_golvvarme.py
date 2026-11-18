@@ -101,6 +101,75 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(plan["preheats"][0]["start"], ts("2026-11-13T13:30"))
         self.assertEqual(row[ts("2026-11-13T14:00")]["target"], 20.0)
 
+    EVENING = [{"start": "17:00", "end": "21:30"}]
+
+    def expensive_afternoon(self):
+        # 2026-11-17-like: afternoon dearest (12-17), evening 17-22 middling, night and late evening cheap.
+        prices = with_range(flat_prices(value=1.5), ts("2026-11-13T12:00"), ts("2026-11-13T17:00"), 3.4)
+        return with_range(prices, ts("2026-11-13T17:00"), ts("2026-11-13T22:00"), 2.0)
+
+    def test_expensive_preheat_lowers_the_comfort_goal(self):
+        config = validate({"comfort_periods": self.EVENING, "cooldown_rate": 0})
+        plan = build_plan(config, self.expensive_afternoon(), ts("2026-11-13T12:00"), TZ, current_temp=18.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        # 20 instead of 21 °C: 2 h of heating at 3.4 kr instead of 3 h.
+        self.assertEqual(plan["preheats"][0]["start"], ts("2026-11-13T15:00"))
+        self.assertEqual(row[ts("2026-11-13T15:00")]["target"], 20.0)
+        self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 20.0)
+        self.assertIn("dyr förvärmning", row[ts("2026-11-13T17:00")]["reason"])
+        self.assertEqual(row[ts("2026-11-13T21:15")]["target"], 20.0)
+        self.assertEqual(row[ts("2026-11-13T21:30")]["target"], 17.0)
+
+    def test_expensive_preheat_rule_can_be_turned_off(self):
+        config = validate({"comfort_periods": self.EVENING, "cooldown_rate": 0, "price_aware_preheat": False})
+        plan = build_plan(config, self.expensive_afternoon(), ts("2026-11-13T12:00"), TZ, current_temp=18.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual(plan["preheats"][0]["start"], ts("2026-11-13T14:00"))
+        self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 21.0)
+
+    def test_cheap_preheat_keeps_full_comfort(self):
+        config = validate({"comfort_periods": self.EVENING, "cooldown_rate": 0})
+        plan = build_plan(config, flat_prices(value=1.5), ts("2026-11-13T12:00"), TZ, current_temp=18.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 21.0)
+
+    def test_nobody_home_skips_preheat_and_comfort(self):
+        config = validate({"comfort_periods": self.EVENING, "cooldown_rate": 0})
+        now = ts("2026-11-13T12:00")
+        plan = build_plan(config, flat_prices(), now, TZ, current_temp=18.0, away_since=now - 20 * 60)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual(plan["preheats"], [])
+        self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 17.0)
+        self.assertIn("Ingen hemma", row[ts("2026-11-13T17:00")]["reason"])
+
+    def test_short_absence_changes_nothing(self):
+        config = validate({"comfort_periods": self.EVENING, "cooldown_rate": 0})
+        now = ts("2026-11-13T12:00")
+        home = build_plan(config, flat_prices(), now, TZ, current_temp=18.0)
+        brief = build_plan(config, flat_prices(), now, TZ, current_temp=18.0, away_since=now - 10 * 60)
+        self.assertEqual(home, brief)
+
+    def test_long_absence_uses_setback(self):
+        config = validate({"comfort_periods": self.EVENING})
+        now = ts("2026-11-13T12:00")
+        plan = build_plan(config, flat_prices(), now, TZ, current_temp=18.0, away_since=now - 5 * 3600)
+        self.assertEqual({r["target"] for r in plan["slots"]}, {16.0})
+
+    def test_presence_states_and_validation(self):
+        from planner import presence_home
+        self.assertTrue(presence_home("person.peter", "home"))
+        self.assertFalse(presence_home("person.peter", "Jobb"))
+        self.assertFalse(presence_home("person.peter", "not_home"))
+        self.assertTrue(presence_home("zone.home", "2"))
+        self.assertFalse(presence_home("zone.home", "0"))
+        self.assertTrue(presence_home("binary_sensor.anyone_home", "on"))
+        self.assertFalse(presence_home("binary_sensor.anyone_home", "off"))
+        for state in ("unavailable", "unknown", None):
+            self.assertIsNone(presence_home("binary_sensor.anyone_home", state))
+        self.assertEqual(validate({"presence_entity": "zone.home"})["presence_entity"], "zone.home")
+        with self.assertRaises(PlanError):
+            validate({"presence_entity": "sensor.temperature"})
+
     def test_vacation_replaces_comfort_and_preheats_before_return(self):
         config = validate({"vacation": {"enabled": True, "start": "2026-11-13T10:00", "end": "2026-11-15T17:00", "temp": 12},
                            "cooldown_rate": 0})
@@ -323,6 +392,27 @@ class ControllerTest(unittest.TestCase):
 
     def writes(self):
         return [c for c in self.ha.calls if c[0] == "climate"]
+
+    def test_presence_tracks_absence_and_unknown_counts_as_home(self):
+        states = {"binary_sensor.anyone_home": "off"}
+        original = self.ha.state
+        self.ha.state = lambda e: {"entity_id": e, "state": states[e], "attributes": {}} if e in states else original(e)
+        self.controller.save_settings({"presence_entity": "binary_sensor.anyone_home",
+                                       "comfort_periods": [{"start": "17:00", "end": "21:30"}]})
+        now = ts("2026-11-13T12:00")
+        self.controller.tick(now)
+        self.assertEqual(self.controller.away_since, now)
+        self.controller.tick(now + 20 * 60)
+        self.assertEqual(self.controller.plan["preheats"], [])
+        self.assertIn("Ingen hemma", self.controller.status["reason"])
+        self.assertIsNone(self.controller.status["next_change"], "Nobody home: economy for the whole plan")
+        states["binary_sensor.anyone_home"] = "unavailable"
+        self.controller.tick(now + 25 * 60)
+        self.assertIsNone(self.controller.away_since, "Unknown presence never keeps the house cold")
+        states["binary_sensor.anyone_home"] = "on"
+        self.controller.tick(now + 26 * 60)
+        self.assertEqual(self.controller.status["presence"]["home"], True)
+        self.assertTrue(self.controller.plan["preheats"])
 
     def test_learned_rates_reach_the_status_and_the_plan(self):
         self.ha.history_rows = [{"last_changed": datetime.fromtimestamp(p["t"]).astimezone().isoformat(),

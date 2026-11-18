@@ -15,7 +15,8 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from planner import DEFAULTS, PlanError, build_plan, effective, learn_rates, next_change, price_at, vacation_bounds, validate
+from planner import (DEFAULTS, PRESENCE_DOMAINS, PlanError, build_plan, effective, learn_rates, next_change, presence_home,
+                     price_at, vacation_bounds, validate)
 from prices import LABELS as PRICE_LABELS, PriceError, load_prices
 from community import Community
 
@@ -201,6 +202,7 @@ class Controller:
         self.plan = None
         self.summary_cache = (0, None)
         self.learned, self.learned_at, self.learned_for = None, 0, None
+        self.away_since = None
 
     def refresh_rates(self, now):
         """Measure heat-up and cool-down from the thermostat's history; outside the lock, at most every few hours."""
@@ -308,6 +310,25 @@ class Controller:
         tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2))
         tmp.replace(self.settings_path)
 
+    def presence(self, config, now):
+        """Track since when nobody is home. Off, unreadable or unknown presence counts as home."""
+        entity = config["presence_entity"]
+        home = None
+        if entity:
+            try:
+                home = presence_home(entity, self.ha.state(entity).get("state"))
+            except HaError as exc:
+                LOG.warning("Närvarogivaren kunde inte läsas: %s", exc)
+        if home is False:
+            if self.away_since is None:
+                self.away_since = now
+                self.events.add("info", "Ingen hemma enligt närvarogivaren")
+        else:
+            if self.away_since is not None and home:
+                self.events.add("info", "Någon är hemma igen – vanlig plan")
+            self.away_since = None
+        return {"entity": entity or None, "home": home, "away_since": self.away_since} if entity else None
+
     def end_vacation_if_over(self, now):
         away = vacation_bounds(self.config, self.zone())
         if away and now >= away[1]:
@@ -365,7 +386,9 @@ class Controller:
                 self.set_status(status)
                 return
             status["learned_rates"] = self.learned and {**self.learned, "in_use": bool(config["learn_rates"])}
-            plan = build_plan(effective(config, self.learned), prices, now, self.zone(), current, committed_preheat=self.committed)
+            status["presence"] = self.presence(config, now)
+            plan = build_plan(effective(config, self.learned), prices, now, self.zone(), current, committed_preheat=self.committed,
+                              away_since=self.away_since)
             for item in plan["preheats"]:
                 if item["start"] <= now < item["comfort_start"]:
                     self.committed[item["comfort_start"]] = item["start"]
@@ -504,11 +527,15 @@ class Controller:
         states = self.ha.states()
         price_ids = {s["entity_id"] for s in states if "/kwh" in str(s["attributes"].get("unit_of_measurement", "")).lower()
                      or "/mwh" in str(s["attributes"].get("unit_of_measurement", "")).lower()}
+        classes = {s["entity_id"]: s["attributes"].get("device_class") for s in states}
         pick = lambda prefix: sorted(({"id": s["entity_id"], "name": s["attributes"].get("friendly_name", s["entity_id"])}
                                       for s in states if s["entity_id"].startswith(prefix)), key=lambda e: e["name"].lower())
         return {"climate": pick("climate."),
                 "price": [e for e in pick("sensor.") if e["id"] in price_ids],
-                "automation": pick("automation.")}
+                "automation": pick("automation."),
+                # Binary sensors only when they describe occupancy; motion sensors flicker too much.
+                "presence": [e for prefix in PRESENCE_DOMAINS for e in pick(prefix)
+                             if prefix != "binary_sensor." or classes.get(e["id"]) in ("occupancy", "presence")]}
 
 
 def handler_for(controller, open_access=False):

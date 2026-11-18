@@ -7,6 +7,24 @@ SLOT = 15 * 60
 # 15-minute dip saves nothing, while each change costs two writes to a cloud thermostat.
 MIN_RUN_SLOTS = 4
 DAYS = ["mån", "tis", "ons", "tor", "fre", "lör", "sön"]
+PRESENCE_DOMAINS = ("person.", "zone.", "group.", "binary_sensor.", "input_boolean.")
+
+
+def presence_home(entity_id, state):
+    """True home, False away, None unknown for a presence entity's state.
+
+    person/group: home vs anything else (not_home or another zone); zone: number of people in it;
+    binary_sensor/input_boolean: on vs off. Unknown or unavailable never counts as away."""
+    if state in (None, "", "unknown", "unavailable"):
+        return None
+    if entity_id.startswith("zone."):
+        try:
+            return float(state) > 0
+        except ValueError:
+            return None
+    if entity_id.startswith(("binary_sensor.", "input_boolean.")):
+        return {"on": True, "off": False}.get(state)
+    return state == "home"
 
 DEFAULTS = {
     "enabled": False,
@@ -30,7 +48,13 @@ DEFAULTS = {
     "expensive_price": 2.8,
     "expensive_min_price": 1.0,
     "comfort_reduction": 1.0,
+    # Also lower a comfort period by comfort_reduction when its preheating has to run in expensive hours.
+    "price_aware_preheat": True,
     "cheap_boost_below": 0.0,
+    # Presence only ever lowers: nobody home -> no preheating and economy instead of comfort.
+    "presence_entity": "",
+    "presence_grace_minutes": 15.0,
+    "presence_long_away_hours": 4.0,
     "power_kw": 1.0,
     "fallback_temp": 20.0,
     "vacation": {"enabled": False, "start": "", "end": "", "temp": 15.0},
@@ -69,10 +93,15 @@ def validate(raw):
         raise PlanError("Styr termostaten måste vara på eller av.")
     if not isinstance(config["learn_rates"], bool):
         raise PlanError("Inlärda takter måste vara på eller av.")
+    if not isinstance(config["price_aware_preheat"], bool):
+        raise PlanError("Sänkning vid dyr förvärmning måste vara på eller av.")
     for key, prefix in (("climate_entity", "climate."), ("price_entity", "sensor."), ("conflict_automation", "automation.")):
         value = config[key]
         if not isinstance(value, str) or (value and not value.startswith(prefix)):
             raise PlanError(f"{key} måste vara en {prefix}-entitet.")
+    presence = config["presence_entity"]
+    if not isinstance(presence, str) or (presence and not presence.startswith(PRESENCE_DOMAINS)):
+        raise PlanError("Närvarogivaren måste vara en person, zon, grupp, binary_sensor eller input_boolean.")
     for key, label, low, high in (
         ("comfort_temp", "Komforttemperatur", 5, 35), ("economy_temp", "Ekonomitemperatur", 5, 35),
         ("setback_temp", "Sänkt temperatur vid dyr el", 5, 35), ("heatup_rate", "Uppvärmningstakt", 0.1, 10), ("cooldown_rate", "Avsvalning", 0, 5),
@@ -81,6 +110,7 @@ def validate(raw):
         ("expensive_min_price", "Lägsta dyra pris", 0, 100), ("comfort_reduction", "Sänkning under komforttid", 0, 10),
         ("cheap_boost_below", "Extra värme under", 0, 100), ("power_kw", "Effekt", 0.05, 20),
         ("fallback_temp", "Reservtemperatur", 5, 35),
+        ("presence_grace_minutes", "Borta minst (min)", 0, 240), ("presence_long_away_hours", "Länge borta (h)", 0.5, 72),
     ):
         config[key] = _number(config[key], label, low, high)
     if not config["setback_temp"] <= config["economy_temp"] <= config["comfort_temp"]:
@@ -201,6 +231,18 @@ def expensive_flags(config, slots, prices, tz):
     return flags
 
 
+def price_is_expensive(config, price, stamp, prices, tz):
+    """The expensive rule of expensive_flags for one price on the day of stamp (e.g. a preheat average)."""
+    if price is None:
+        return False
+    if config["expensive_mode"] == "absolute":
+        return price >= config["expensive_price"]
+    day = datetime.fromtimestamp(stamp, tz).date()
+    values = [v for start, v in prices if datetime.fromtimestamp(start, tz).date() == day]
+    rank = sum(v < price for v in values) / (len(values) - 1) if len(values) > 1 else 0
+    return rank * 100 >= config["expensive_percent"] and price >= config["expensive_min_price"]
+
+
 def drop_short_runs(flags, min_slots, open_ends):
     """flags with True runs shorter than min_slots set to False.
 
@@ -272,11 +314,17 @@ def predicted_temperature(config, plan, windows, position, current_temp, first):
     return max(floor, base_temp - config["cooldown_rate"] * max(0.0, a - base_time) / 3600)
 
 
-def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, committed_preheat=None):
+def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, committed_preheat=None, away_since=None):
     """Slots from now: {t, price, target, reason, expensive, comfort}.
 
     committed_preheat: {comfort_start: preheat_start} already begun; kept so a changing room
-    temperature cannot move a running preheat back and forth."""
+    temperature cannot move a running preheat back and forth.
+    away_since: epoch since nobody is home (None: home or unknown). After presence_grace_minutes the
+    plan keeps economy instead of comfort and skips preheating, and after presence_long_away_hours
+    it keeps the setback temperature. The plan is rebuilt every minute, so coming home restores it."""
+    away_for = None if away_since is None else now - away_since
+    nobody_home = away_for is not None and away_for >= config["presence_grace_minutes"] * 60
+    long_away = nobody_home and away_for >= config["presence_long_away_hours"] * 3600
     first = now - (now % SLOT)
     if prices:
         step = prices[-1][0] - prices[-2][0] if len(prices) > 1 else 3600
@@ -315,6 +363,12 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
         in_comfort = any(a <= t < b for a, b in windows)
         if away and away[0] <= t < away[1]:
             target, reason = config["vacation"]["temp"], "Semester"
+        elif long_away:
+            target, reason = config["setback_temp"], "Ingen hemma sedan länge – sänkt"
+        elif nobody_home:
+            target, reason = config["economy_temp"], "Ingen hemma – ekonomi"
+            if expensive:
+                target, reason = config["setback_temp"], "Ingen hemma, dyr el – sänkt"
         elif in_comfort:
             target, reason = config["comfort_temp"], "Komforttid"
             if expensive and config["comfort_reduction"] > 0:
@@ -330,8 +384,8 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
 
     preheats = []
     committed_preheat = committed_preheat or {}
-    for position, (a, _b) in enumerate(windows):
-        if a <= first:
+    for position, (a, b) in enumerate(windows):
+        if a <= first or nobody_home:
             continue
         goal = next((row["target"] for row in plan if row["t"] == a), config["comfort_temp"])
         if a in committed_preheat:
@@ -342,6 +396,20 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
             if needed <= 0:
                 continue
             start = best_preheat_start(config, slots, index_of, a, needed, now)
+            # Reaching full comfort would mean heating in expensive hours: aim a little lower instead.
+            reduced = max(config["economy_temp"], goal - config["comfort_reduction"])
+            if config["price_aware_preheat"] and start < a and reduced < goal and goal >= config["comfort_temp"] - 1e-9:
+                paid = [slots[index_of[t]][1] for t in range(int(start), int(a), SLOT) if t in index_of]
+                paid = [p for p in paid if p is not None]
+                if paid and price_is_expensive(config, sum(paid) / len(paid), a, prices, tz):
+                    goal = reduced
+                    for row in plan:
+                        if a <= row["t"] < b and row["comfort"] and row["target"] > goal:
+                            row["target"], row["reason"] = goal, "Komforttid – dyr förvärmning, något sänkt"
+                    needed = min(max(0.0, goal - from_temp) / config["heatup_rate"], config["max_preheat_hours"])
+                    if needed <= 0:
+                        continue
+                    start = best_preheat_start(config, slots, index_of, a, needed, now)
         if start >= a:
             continue
         preheats.append({"start": start, "comfort_start": a})
