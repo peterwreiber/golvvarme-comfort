@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 const DAYS = ["Mån", "Tis", "Ons", "Tor", "Fre", "Lör", "Sön"];
 const NUMBERS = ["comfort_temp", "economy_temp", "setback_temp", "comfort_reduction", "expensive_percent", "expensive_min_price",
   "expensive_price", "cheap_boost_below", "heatup_rate", "cooldown_rate", "max_preheat_hours", "holding_share", "power_kw", "fallback_temp",
-  "presence_grace_minutes", "presence_long_away_hours"];
+  "presence_grace_minutes", "presence_long_away_hours", "presence_near_km"];
 const SELECTS = ["expensive_mode", "climate_entity", "price_entity", "conflict_automation", "presence_entity"];
 let settings = null;
 let dirty = false;

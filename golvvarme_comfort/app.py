@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from planner import (DEFAULTS, PRESENCE_DOMAINS, PlanError, build_plan, effective, learn_rates, next_change, presence_home,
+from planner import (DEFAULTS, PRESENCE_DOMAINS, PlanError, build_plan, effective, learn_rates, next_change, nearest_person, presence_home,
                      price_at, vacation_bounds, validate)
 from prices import LABELS as PRICE_LABELS, PriceError, load_prices
 from community import Community
@@ -203,6 +203,7 @@ class Controller:
         self.summary_cache = (0, None)
         self.learned, self.learned_at, self.learned_for = None, 0, None
         self.away_since = None
+        self.near_home = False
 
     def refresh_rates(self, now):
         """Measure heat-up and cool-down from the thermostat's history; outside the lock, at most every few hours."""
@@ -319,15 +320,45 @@ class Controller:
                 home = presence_home(entity, self.ha.state(entity).get("state"))
             except HaError as exc:
                 LOG.warning("Närvarogivaren kunde inte läsas: %s", exc)
+        near = None
+        if home is False and config["presence_near_km"] > 0:
+            near = self.nearest()
+            # HA unreadable ("error") counts as home, like unknown presence; no positions at all does not.
+            if near == "error" or (near and near["km"] <= config["presence_near_km"]):
+                home = True
+                if not self.near_home:
+                    who = "positionerna kunde inte läsas" if near == "error" else f"{near['name']} är {near['km']:.0f} km bort"
+                    self.events.add("info", f"Ingen hemma, men {who} – vanlig plan")
+                self.near_home = True
+            elif self.near_home:
+                self.events.add("info", "Ingen nära hemmet längre")
+                self.near_home = False
+        else:
+            self.near_home = False
         if home is False:
             if self.away_since is None:
                 self.away_since = now
                 self.events.add("info", "Ingen hemma enligt närvarogivaren")
         else:
-            if self.away_since is not None and home:
+            if self.away_since is not None and home and not self.near_home:
                 self.events.add("info", "Någon är hemma igen – vanlig plan")
             self.away_since = None
-        return {"entity": entity or None, "home": home, "away_since": self.away_since} if entity else None
+        return {"entity": entity or None, "home": home, "away_since": self.away_since,
+                "near": near if near == "error" or not near else {"name": near["name"], "km": round(near["km"], 1)}} if entity else None
+
+    def nearest(self):
+        """Closest person to home by GPS: {name, km}; None if nobody has a position; "error" if HA cannot be read."""
+        try:
+            states = self.ha.states()
+        except HaError as exc:
+            LOG.warning("Positioner kunde inte läsas: %s", exc)
+            return "error"
+        home = next((s.get("attributes") or {} for s in states if s.get("entity_id") == "zone.home"), {})
+        try:
+            found = nearest_person((float(home["latitude"]), float(home["longitude"])), states)
+        except (KeyError, TypeError, ValueError):
+            return None
+        return found and {"name": found[1], "km": found[0]}
 
     def end_vacation_if_over(self, now):
         away = vacation_bounds(self.config, self.zone())

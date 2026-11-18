@@ -1,5 +1,6 @@
 """Price-aware plan for an electric floor heating thermostat. Pure functions, no I/O."""
 
+import math
 from datetime import datetime, timedelta
 
 SLOT = 15 * 60
@@ -25,6 +26,32 @@ def presence_home(entity_id, state):
     if entity_id.startswith(("binary_sensor.", "input_boolean.")):
         return {"on": True, "off": False}.get(state)
     return state == "home"
+
+
+def nearest_person(home, states):
+    """(km, name) of the person entity closest to home by its GPS position, or None.
+
+    home: (latitude, longitude). Persons without a position (no GPS tracker) are skipped."""
+    best = None
+    for s in states:
+        if not s.get("entity_id", "").startswith("person."):
+            continue
+        attrs = s.get("attributes") or {}
+        try:
+            lat, lon = float(attrs["latitude"]), float(attrs["longitude"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        km = distance_km(home, (lat, lon))
+        if best is None or km < best[0]:
+            best = (km, attrs.get("friendly_name") or s["entity_id"])
+    return best
+
+
+def distance_km(a, b):
+    """Great-circle distance between two (latitude, longitude) points."""
+    lat1, lon1, lat2, lon2 = map(math.radians, (*a, *b))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    return 2 * 6371.0 * math.asin(math.sqrt(h))
 
 DEFAULTS = {
     "enabled": False,
@@ -55,6 +82,8 @@ DEFAULTS = {
     "presence_entity": "",
     "presence_grace_minutes": 15.0,
     "presence_long_away_hours": 4.0,
+    # Away but someone within this many km of home (by phone GPS) counts as home; 0 = off.
+    "presence_near_km": 0.0,
     "power_kw": 1.0,
     "fallback_temp": 20.0,
     "vacation": {"enabled": False, "start": "", "end": "", "temp": 15.0},
@@ -111,6 +140,7 @@ def validate(raw):
         ("cheap_boost_below", "Extra värme under", 0, 100), ("power_kw", "Effekt", 0.05, 20),
         ("fallback_temp", "Reservtemperatur", 5, 35),
         ("presence_grace_minutes", "Borta minst (min)", 0, 240), ("presence_long_away_hours", "Länge borta (h)", 0.5, 72),
+        ("presence_near_km", "Nära hemmet (km)", 0, 500),
     ):
         config[key] = _number(config[key], label, low, high)
     if not config["setback_temp"] <= config["economy_temp"] <= config["comfort_temp"]:

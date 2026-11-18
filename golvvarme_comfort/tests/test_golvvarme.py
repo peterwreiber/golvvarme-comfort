@@ -414,6 +414,75 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(self.controller.status["presence"]["home"], True)
         self.assertTrue(self.controller.plan["preheats"])
 
+    def near_setup(self, peter):
+        """zone.home empty; Peter at (lat, lon) or without GPS (None)."""
+        home = {"entity_id": "zone.home", "state": "0", "attributes": {"latitude": 59.2327, "longitude": 18.1463}}
+        person = {"entity_id": "person.peter", "state": "Jobb", "attributes": {"friendly_name": "Peter"}}
+        if peter:
+            person["attributes"].update(latitude=peter[0], longitude=peter[1])
+        self.everything = [home, person, {"entity_id": "person.anne", "state": "not_home", "attributes": {}}]
+        original = self.ha.state
+        self.ha.state = lambda e: home if e == "zone.home" else original(e)
+        self.ha.states = lambda: self.everything
+        self.controller.save_settings({"presence_entity": "zone.home", "presence_near_km": 25,
+                                       "comfort_periods": [{"start": "17:00", "end": "21:30"}]})
+
+    def test_someone_near_home_keeps_preheating(self):
+        self.near_setup((59.3643, 18.0179))  # work, about 16 km away
+        now = ts("2026-11-13T12:00")
+        self.controller.tick(now)
+        self.controller.tick(now + 20 * 60)
+        self.assertIsNone(self.controller.away_since)
+        self.assertTrue(self.controller.plan["preheats"])
+        near = self.controller.status["presence"]["near"]
+        self.assertEqual(near["name"], "Peter")
+        self.assertAlmostEqual(near["km"], 16, delta=1)
+        messages = [e["message"] for e in self.controller.events.recent()]
+        self.assertEqual(sum("16 km bort" in m for m in messages), 1)
+        self.assertFalse(any("Ingen hemma enligt" in m for m in messages))
+
+    def test_far_away_counts_as_away(self):
+        self.near_setup((57.7089, 11.9746))  # Göteborg
+        now = ts("2026-11-13T12:00")
+        self.controller.tick(now)
+        self.controller.tick(now + 20 * 60)
+        self.assertEqual(self.controller.away_since, now)
+        self.assertEqual(self.controller.plan["preheats"], [])
+        self.assertIn("Ingen hemma", self.controller.status["reason"])
+        # Driving back within range brings back the normal plan.
+        self.everything[1]["attributes"].update(latitude=59.30, longitude=18.10)
+        self.controller.tick(now + 30 * 60)
+        self.assertIsNone(self.controller.away_since)
+        self.assertTrue(self.controller.plan["preheats"])
+
+    def test_no_gps_keeps_presence_working_and_ha_error_counts_as_home(self):
+        self.near_setup(None)
+        now = ts("2026-11-13T12:00")
+        self.controller.tick(now)
+        self.assertEqual(self.controller.away_since, now, "Without positions presence works as before")
+
+        def broken():
+            raise app.HaError("nere")
+        self.ha.states = broken
+        self.controller.tick(now + 20 * 60)
+        self.assertIsNone(self.controller.away_since, "Unreadable positions never keep the house cold")
+        self.assertEqual(self.controller.status["presence"]["near"], "error")
+
+    def test_near_off_by_default(self):
+        self.near_setup((59.3643, 18.0179))
+        self.controller.save_settings({"presence_near_km": 0})
+        now = ts("2026-11-13T12:00")
+        self.controller.tick(now)
+        self.assertEqual(self.controller.away_since, now)
+
+    def test_distance_and_validation(self):
+        from planner import distance_km, nearest_person
+        self.assertAlmostEqual(distance_km((59.3293, 18.0686), (57.7089, 11.9746)), 398, delta=3)
+        self.assertIsNone(nearest_person((59.0, 18.0), [{"entity_id": "person.x", "attributes": {}}]))
+        self.assertEqual(validate({})["presence_near_km"], 0)
+        with self.assertRaises(PlanError):
+            validate({"presence_near_km": -1})
+
     def test_learned_rates_reach_the_status_and_the_plan(self):
         self.ha.history_rows = [{"last_changed": datetime.fromtimestamp(p["t"]).astimezone().isoformat(),
                                  "attributes": {"current_temperature": p["current"], "temperature": p["target"],
