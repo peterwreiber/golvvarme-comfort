@@ -64,3 +64,4 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:16px 0}
 .badge.vacation-on{background:#e3eefb;color:#21497e}:root[data-theme=dark] .badge.vacation-on{background:#1b2b44;color:#a9c6f2}
 .vacation-fields.off{opacity:.55}
 .community-badge{color:var(--muted);font-weight:600;cursor:help}
+.toggle small.full{flex-basis:100%}
