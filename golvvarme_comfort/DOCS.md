@@ -4,7 +4,7 @@ Home Assistant-tillägg som styr elektrisk golvvärme efter elpriset. Du anger n
 
 ## Funktioner
 
-- **Komforttider** per veckodag (24-timmarsklocka). Övrig tid hålls en ekonomitemperatur.
+- **Komforttider** per veckodag (24-timmarsklocka), var och en med egen temperatur eller komforttemperaturen. Övrig tid hålls en ekonomitemperatur. Överlappar två tider gäller den varmaste.
 - **Förvärmning** inför varje komforttid, med start när det blir billigast. Bygger på golvets uppvärmnings- och avsvalningstakt.
 - **Dyr el:** sänkt temperatur utanför komforttid och valfri liten sänkning under komforttid. Dyrt räknas antingen relativt (dygnets dyraste del) eller över ett fast pris. Dyra eller billiga perioder kortare än en timme räknas inte, eftersom golvet håller värmen längre än så och varje ändring kostar anrop till termostaten.
 - **Dyr förvärmning:** måste golvet värmas under dygnets dyra timmar för att nå komforttiden, sänks komfortmålet med samma steg som vid dyr el. Förvärmningen blir då kortare. Kan stängas av.

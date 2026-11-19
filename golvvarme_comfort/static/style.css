@@ -46,7 +46,7 @@ button{border:0;background:var(--green);color:#fff;border-radius:9px;padding:11p
 .toggle{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}.toggle input{width:20px;height:20px;accent-color:var(--green)}.toggle.big{font-size:16px;padding:14px;border:1px solid var(--line);border-radius:12px}.toggle.big small{flex-basis:100%}
 .hint{font-size:12px;color:var(--muted)}
 .field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:0 18px}
-.period{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.period{display:grid;grid-template-columns:auto auto auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
 .time{display:inline-flex;align-items:center;gap:4px}.time select{width:auto;margin:0;padding:9px 8px;font-variant-numeric:tabular-nums}.time b{font-weight:700}
 .days{display:flex;flex-wrap:wrap;gap:4px}.days label{margin:0;font-weight:500;font-size:12px;display:flex;align-items:center;gap:3px;padding:4px 7px;border:1px solid var(--line);border-radius:8px}.days input{accent-color:var(--green)}
 #add-period{margin-top:10px}
@@ -55,7 +55,7 @@ button{border:0;background:var(--green);color:#fff;border-radius:9px;padding:11p
 .events{list-style:none;padding:0;margin:0;max-height:360px;overflow:auto}.events li{padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}.events small{display:block;color:var(--muted);font-size:11px}.events li.error{color:var(--warm)}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:16px 0}
 @media(max-width:800px){header,main{padding:16px}.card{padding:18px 16px}.now-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.metrics{grid-template-columns:1fr 1fr}.metrics>div:last-child{grid-column:1/-1}}
-@media(max-width:480px){.now-tile{padding:12px}.now-tile strong{font-size:26px}.period{grid-template-columns:1fr 1fr auto}.period .days{grid-column:1/-1;grid-row:2}h1{font-size:25px}}
+@media(max-width:480px){.now-tile{padding:12px}.now-tile strong{font-size:26px}.period{grid-template-columns:1fr 1fr auto}.period .p-temp{grid-column:1/-1;grid-row:2;margin:0}.period .days{grid-column:1/-1;grid-row:3}h1{font-size:25px}}
 .header-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}button.theme-toggle{color:var(--ink);cursor:pointer;font-weight:700}button.theme-toggle:hover{filter:none;border-color:var(--green)}
 :root[data-theme=dark] .badge.active{background:#173d2d;color:#9ee3c1}
 .vacation{border:1px solid var(--line);border-radius:12px;padding:6px 14px 12px}.vacation .toggle{margin-top:8px}.vacation .toggle small{flex-basis:100%}

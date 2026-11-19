@@ -224,6 +224,20 @@ function timePicker(cls, label, value, allowMidnightEnd) {
 
 const timeValue = (wrap) => `${pad(wrap.querySelector(".t-hour").value)}:${pad(wrap.querySelector(".t-minute").value)}`;
 
+function tempPicker(value) {
+  const select = document.createElement("select");
+  select.className = "p-temp";
+  select.setAttribute("aria-label", "Temperatur under perioden");
+  const standard = settings && settings.comfort_temp != null ? ` (${temp(settings.comfort_temp)})` : "";
+  select.append(new Option(`Komfort${standard}`, ""));
+  const temps = [];
+  for (let t = 10; t <= 30; t += 0.5) temps.push(t);
+  if (value != null && !temps.includes(value)) temps.push(value);
+  temps.sort((a, b) => a - b).forEach((t) => select.append(new Option(temp(t), t)));
+  select.value = value == null ? "" : String(value);
+  return select;
+}
+
 function periodRow(p) {
   const row = document.createElement("div");
   row.className = "period";
@@ -241,7 +255,7 @@ function periodRow(p) {
   remove.setAttribute("aria-label", "Ta bort");
   remove.textContent = "✕";
   remove.onclick = () => { row.remove(); dirty = true; $("save-status").textContent = "Osparade ändringar"; };
-  row.append(timePicker("p-start", "Från", p.start), timePicker("p-end", "Till", p.end, true), days, remove);
+  row.append(timePicker("p-start", "Från", p.start), timePicker("p-end", "Till", p.end, true), tempPicker(p.temp), days, remove);
   return row;
 }
 
@@ -285,6 +299,7 @@ function collect() {
     start: timeValue(row.querySelector(".p-start")),
     end: timeValue(row.querySelector(".p-end")),
     days: [...row.querySelectorAll(".days input:checked")].map((c) => Number(c.value)),
+    ...(row.querySelector(".p-temp").value === "" ? {} : { temp: Number(row.querySelector(".p-temp").value) }),
   }));
   value.vacation = {
     enabled: $("vacation-enabled").checked,

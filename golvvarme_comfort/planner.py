@@ -160,7 +160,12 @@ def validate(raw):
         days = period.get("days", list(range(7)))
         if not isinstance(days, list) or not days or any(d not in range(7) or isinstance(d, bool) for d in days):
             raise PlanError(f"Period {index}: välj minst en veckodag.")
-        clean.append({"start": period["start"], "end": period["end"], "days": sorted(set(days))})
+        item = {"start": period["start"], "end": period["end"], "days": sorted(set(days))}
+        if period.get("temp") is not None:
+            item["temp"] = _number(period["temp"], f"Period {index} temperatur", 5, 35)
+            if item["temp"] < config["economy_temp"]:
+                raise PlanError(f"Period {index}: temperaturen kan inte vara lägre än ekonomitemperaturen.")
+        clean.append(item)
     config["comfort_periods"] = clean
     config["vacation"] = validate_vacation(config["vacation"])
     return config
@@ -200,9 +205,9 @@ def vacation_bounds(config, tz):
     return to_epoch(vacation["start"]), to_epoch(vacation["end"])
 
 
-def comfort_windows(config, start, end, tz):
-    """(start, end) epoch pairs of comfort periods that overlap [start, end). Periods may pass midnight."""
-    windows = []
+def comfort_spans(config, start, end, tz):
+    """(start, end, temperature) of each comfort period that overlaps [start, end), unmerged. Periods may pass midnight."""
+    spans = []
     day = datetime.fromtimestamp(start, tz).date() - timedelta(days=1)
     last = datetime.fromtimestamp(end, tz).date()
     while day <= last:
@@ -214,10 +219,17 @@ def comfort_windows(config, start, end, tz):
             a = (midnight + timedelta(minutes=begin)).timestamp()
             b = (midnight + timedelta(minutes=finish + (1440 if finish < begin else 0))).timestamp()
             if b > start and a < end:
-                windows.append((a, b))
+                spans.append((a, b, period.get("temp", config["comfort_temp"])))
         day += timedelta(days=1)
+    return spans
+
+
+def comfort_windows(config, start, end, tz, spans=None):
+    """(start, end) epoch pairs of comfort periods that overlap [start, end), overlapping periods merged."""
+    if spans is None:
+        spans = comfort_spans(config, start, end, tz)
     merged = []
-    for a, b in sorted(windows):
+    for a, b, _temp in sorted(spans):
         if merged and a <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], b))
         else:
@@ -326,7 +338,7 @@ def best_preheat_start(config, slots, index_of, comfort_start, hours_needed, now
     return best
 
 
-def predicted_temperature(config, plan, windows, position, current_temp, first):
+def predicted_temperature(config, plan, windows, position, current_temp, first, comfort_at=None):
     """Expected floor temperature at the start of windows[position] without preheating.
 
     The floor cools by cooldown_rate from the current reading (or from comfort at the end of an
@@ -334,7 +346,8 @@ def predicted_temperature(config, plan, windows, position, current_temp, first):
     a = windows[position][0]
     previous = [w for w in windows[:position] if w[1] > first]
     if previous:
-        base_temp, base_time = config["comfort_temp"], previous[-1][1]
+        end_temp = comfort_at(previous[-1][1] - SLOT) if comfort_at else None
+        base_temp, base_time = end_temp or config["comfort_temp"], previous[-1][1]
     elif current_temp is not None:
         base_temp, base_time = current_temp, first
     else:
@@ -374,7 +387,13 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
         [price is not None and config["cheap_boost_below"] > 0 and price <= config["cheap_boost_below"] and not expensive
          for (_t, price), expensive in zip(extended, expensive_all)], MIN_RUN_SLOTS, open_ends)
     flags, cheap = expensive_all[len(back):], cheap_all[len(back):]
-    windows = comfort_windows(config, first, end + config["max_preheat_hours"] * 3600, tz)
+    spans = comfort_spans(config, first, end + config["max_preheat_hours"] * 3600, tz)
+    windows = comfort_windows(config, first, end, tz, spans)
+
+    def comfort_at(t):
+        """Comfort temperature at t: the warmest period covering it (None outside comfort)."""
+        temps = [temp for a, b, temp in spans if a <= t < b]
+        return max(temps) if temps else None
     away = vacation_bounds(config, tz)
     if away:
         clipped = []
@@ -400,9 +419,10 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
             if expensive:
                 target, reason = config["setback_temp"], "Ingen hemma, dyr el – sänkt"
         elif in_comfort:
-            target, reason = config["comfort_temp"], "Komforttid"
+            full = comfort_at(t) or config["comfort_temp"]
+            target, reason = full, "Komforttid"
             if expensive and config["comfort_reduction"] > 0:
-                target, reason = config["comfort_temp"] - config["comfort_reduction"], "Komforttid, dyr el – något sänkt"
+                target, reason = max(config["economy_temp"], full - config["comfort_reduction"]), "Komforttid, dyr el – något sänkt"
         else:
             target, reason = config["economy_temp"], "Ekonomi"
             if expensive:
@@ -417,18 +437,19 @@ def build_plan(config, prices, now, tz, current_temp=None, horizon_hours=36, com
     for position, (a, b) in enumerate(windows):
         if a <= first or nobody_home:
             continue
-        goal = next((row["target"] for row in plan if row["t"] == a), config["comfort_temp"])
+        full = comfort_at(a) or config["comfort_temp"]
+        goal = next((row["target"] for row in plan if row["t"] == a), full)
         if a in committed_preheat:
             start = committed_preheat[a]
         else:
-            from_temp = predicted_temperature(config, plan, windows, position, current_temp, first)
+            from_temp = predicted_temperature(config, plan, windows, position, current_temp, first, comfort_at)
             needed = min(max(0.0, goal - from_temp) / config["heatup_rate"], config["max_preheat_hours"])
             if needed <= 0:
                 continue
             start = best_preheat_start(config, slots, index_of, a, needed, now)
             # Reaching full comfort would mean heating in expensive hours: aim a little lower instead.
             reduced = max(config["economy_temp"], goal - config["comfort_reduction"])
-            if config["price_aware_preheat"] and start < a and reduced < goal and goal >= config["comfort_temp"] - 1e-9:
+            if config["price_aware_preheat"] and start < a and reduced < goal and goal >= full - 1e-9:
                 paid = [slots[index_of[t]][1] for t in range(int(start), int(a), SLOT) if t in index_of]
                 paid = [p for p in paid if p is not None]
                 if paid and price_is_expensive(config, sum(paid) / len(paid), a, prices, tz):

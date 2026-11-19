@@ -133,6 +133,54 @@ class PlannerTest(unittest.TestCase):
         row = {r["t"]: r for r in plan["slots"]}
         self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 21.0)
 
+    def test_period_temperature_is_validated(self):
+        config = validate({"comfort_periods": [{"start": "06:00", "end": "07:00", "temp": 18.5}, {"start": "17:00", "end": "21:00"}]})
+        self.assertEqual(config["comfort_periods"][0]["temp"], 18.5)
+        self.assertNotIn("temp", config["comfort_periods"][1])
+        self.assertNotIn("temp", validate({"comfort_periods": [{"start": "06:00", "end": "07:00", "temp": None}]})["comfort_periods"][0])
+        with self.assertRaises(PlanError):
+            validate({"comfort_periods": [{"start": "06:00", "end": "07:00", "temp": 16.5}]})  # below economy 17
+        with self.assertRaises(PlanError):
+            validate({"comfort_periods": [{"start": "06:00", "end": "07:00", "temp": "varm"}]})
+
+    def test_each_period_keeps_its_own_temperature(self):
+        config = validate({"comfort_periods": [{"start": "06:00", "end": "07:00", "temp": 18.0},
+                                               {"start": "17:00", "end": "21:00"}], "cooldown_rate": 0})
+        plan = build_plan(config, flat_prices(value=1.5), ts("2026-11-13T00:00"), TZ, current_temp=17.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual(row[ts("2026-11-13T06:00")]["target"], 18.0)
+        self.assertEqual(row[ts("2026-11-13T07:00")]["target"], 17.0)
+        self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 21.0)
+        # 1 °C to gain in the morning: one hour of preheating instead of the evening's four.
+        starts = {p["comfort_start"]: p["start"] for p in plan["preheats"]}
+        self.assertEqual(starts[ts("2026-11-13T06:00")], ts("2026-11-13T05:00"))
+        self.assertEqual(row[ts("2026-11-13T05:00")]["target"], 18.0)
+        self.assertEqual(row[ts("2026-11-13T04:45")]["target"], 17.0)
+
+    def test_overlapping_periods_use_the_warmest(self):
+        config = validate({"comfort_periods": [{"start": "17:00", "end": "21:00", "temp": 19.0},
+                                               {"start": "18:00", "end": "19:00", "temp": 20.5}], "cooldown_rate": 0})
+        plan = build_plan(config, flat_prices(value=1.5), ts("2026-11-13T12:00"), TZ, current_temp=19.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 19.0)
+        self.assertEqual(row[ts("2026-11-13T18:00")]["target"], 20.5)
+        self.assertEqual(row[ts("2026-11-13T19:00")]["target"], 19.0)
+
+    def test_expensive_comfort_reduction_never_goes_below_economy(self):
+        prices = with_range(flat_prices(value=1.5), ts("2026-11-13T06:00"), ts("2026-11-13T08:00"), 3.4)
+        config = validate({"comfort_periods": [{"start": "06:00", "end": "08:00", "temp": 17.5}],
+                           "comfort_reduction": 2.0, "expensive_mode": "absolute"})
+        plan = build_plan(config, prices, ts("2026-11-13T06:00"), TZ, current_temp=17.5)
+        self.assertEqual(plan["slots"][0]["target"], 17.0)
+
+    def test_expensive_preheat_lowers_a_period_temperature(self):
+        evening = [{"start": "17:00", "end": "21:30", "temp": 20.0}]
+        config = validate({"comfort_periods": evening, "cooldown_rate": 0})
+        plan = build_plan(config, self.expensive_afternoon(), ts("2026-11-13T12:00"), TZ, current_temp=18.0)
+        row = {r["t"]: r for r in plan["slots"]}
+        self.assertEqual(row[ts("2026-11-13T17:00")]["target"], 19.0)
+        self.assertIn("dyr förvärmning", row[ts("2026-11-13T17:00")]["reason"])
+
     def test_nobody_home_skips_preheat_and_comfort(self):
         config = validate({"comfort_periods": self.EVENING, "cooldown_rate": 0})
         now = ts("2026-11-13T12:00")
