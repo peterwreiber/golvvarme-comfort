@@ -63,3 +63,4 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:16px 0}
 .when{display:flex;gap:6px;align-items:center;margin-top:6px}.when select{width:auto;margin:0;padding:9px 8px}.when select.w-date{flex:1;min-width:0}
 .badge.vacation-on{background:#e3eefb;color:#21497e}:root[data-theme=dark] .badge.vacation-on{background:#1b2b44;color:#a9c6f2}
 .vacation-fields.off{opacity:.55}
+.community-badge{color:var(--muted);font-weight:600;cursor:help}

@@ -23,7 +23,7 @@ from community import Community
 LOG = logging.getLogger("golvvarme_comfort")
 STATIC = Path(__file__).parent / "static"
 VERSION = os.environ.get("GOLVVARME_VERSION", "dev")
-COMMUNITY = Community("https://raw.githubusercontent.com/peterwreiber/golvvarme-comfort/stats/anvandare.json")
+COMMUNITY = Community(os.environ.get("GOLVVARME_COMMUNITY_URL") or "https://raw.githubusercontent.com/peterwreiber/golvvarme-comfort/stats/anvandare.json")
 # A cloud thermostat: never write more often than this, except when handing control back.
 MIN_WRITE_SECONDS = 300
 # After this many writes that the thermostat did not take, retry only every UNCONFIRMED_RETRY_SECONDS.

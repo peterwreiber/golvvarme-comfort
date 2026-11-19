@@ -386,6 +386,17 @@ function communityText(community) {
   return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
 }
 
+function showCommunity(community) {
+  const text = communityText(community);
+  $("community").textContent = text ? `· ${text}` : "";
+  const badge = $("community-badge");
+  badge.hidden = !community;
+  if (!community) return;
+  const n = community.installations;
+  badge.textContent = `≈ ${n.toLocaleString("sv-SE")} ${n === 1 ? "installation" : "installationer"}`;
+  badge.title = `Unika installationer senaste 14 dagarna enligt GitHubs statistik över kloner av repot${community.updated ? ` (uppdaterad ${community.updated})` : ""}. Ungefärligt; inget skickas från din installation.`;
+}
+
 async function init() {
   try {
     const [s, entities] = await Promise.all([api("api/settings"), api("api/entities").catch(() => ({}))]);
@@ -414,7 +425,7 @@ async function init() {
     try { await api("api/disable-conflict", {}); notice("Automationen är avstängd."); refresh(); } catch (e) { notice(e.message, true); }
   };
   refresh();
-  api("api/community").then((d) => { const t = communityText(d.community); $("community").textContent = t ? `· ${t}` : ""; }).catch(() => {});
+  api("api/community").then((d) => showCommunity(d.community)).catch(() => showCommunity(null));
   setInterval(refresh, 60000);
 }
 
