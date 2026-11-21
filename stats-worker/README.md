@@ -1,4 +1,4 @@
-# comfort-stats
+# stats (stats.ha-comfort.workers.dev)
 
 Anonym räknare för Golvvärme Comfort och NIBE Comfort. Tar emot `{app, id, version}` (id = slumpat av tillägget) och svarar med antal aktiva installationer. Sparar inga IP-adresser.
 

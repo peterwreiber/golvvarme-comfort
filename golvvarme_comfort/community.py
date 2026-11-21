@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 
 LOG = logging.getLogger("golvvarme_comfort")
 APP = "golvvarme_comfort"
-DEFAULT_URL = "https://comfort-stats.wreiber.workers.dev"
+DEFAULT_URL = "https://stats.ha-comfort.workers.dev"
 CACHE_SECONDS = 3600
 RETRY_SECONDS = 600
 PING_SECONDS = 6 * 3600
