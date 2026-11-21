@@ -30,6 +30,12 @@ Har du en egen automation som redan styr termostaten efter elpriset kan du ange 
 - Den officiella Nord Pool-integrationen ger spotpris utan skatt och nätavgift. Sätt därför gränsen för dyr el lägre än för Tibber.
 - Effekten (kW) används bara för att uppskatta kostnaden.
 
+## Anonym användningsstatistik
+
+För att se hur många som använder tillägget skickar det var 6:e timme `{"app", "id", "version"}` till en liten räknare (en Cloudflare Worker, källkoden finns i `stats-worker/`). `id` är ett slumpat värde som skapas vid första start och sparas i `/data/usage.json`. Inget om ditt hem, din termostat, dina priser eller din plats skickas, och räknaren sparar ingen IP-adress. Antalet aktiva installationer visas i sidhuvudet.
+
+Det är påslaget från början. Stäng av det under **Avancerat → Skicka anonym användningsstatistik**, så tas id:t bort ur räkningen.
+
 ## Utveckling
 
 ```sh

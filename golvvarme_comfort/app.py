@@ -18,12 +18,14 @@ from zoneinfo import ZoneInfo
 from planner import (DEFAULTS, PRESENCE_DOMAINS, PlanError, build_plan, effective, learn_rates, next_change, nearest_person, presence_home,
                      price_at, vacation_bounds, validate)
 from prices import LABELS as PRICE_LABELS, PriceError, load_prices
-from community import Community
+from community import DEFAULT_URL as COMMUNITY_URL, Community, Reporter
 
 LOG = logging.getLogger("golvvarme_comfort")
 STATIC = Path(__file__).parent / "static"
 VERSION = os.environ.get("GOLVVARME_VERSION", "dev")
-COMMUNITY = Community(os.environ.get("GOLVVARME_COMMUNITY_URL") or "https://raw.githubusercontent.com/peterwreiber/golvvarme-comfort/stats/anvandare.json")
+# GOLVVARME_COMMUNITY_URL="" turns the count and the ping off (development and dry runs).
+COMMUNITY_BASE = os.environ.get("GOLVVARME_COMMUNITY_URL", COMMUNITY_URL)
+COMMUNITY = Community(COMMUNITY_BASE)
 # A cloud thermostat: never write more often than this, except when handing control back.
 MIN_WRITE_SECONDS = 300
 # After this many writes that the thermostat did not take, retry only every UNCONFIRMED_RETRY_SECONDS.
@@ -656,6 +658,16 @@ def handler_for(controller, open_access=False):
     return Handler
 
 
+def usage_loop(controller, reporter, stop, interval=60):
+    stop.wait(120)  # let the add-on settle first
+    while not stop.is_set():
+        try:
+            reporter.tick(controller.config["share_usage"])
+        except Exception:
+            LOG.exception("Oväntat fel i användningsstatistiken")
+        stop.wait(interval)
+
+
 def run_loop(controller, stop, interval=60):
     while not stop.is_set():
         try:
@@ -690,6 +702,7 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     threading.Thread(target=run_loop, args=(controller, stop), daemon=True).start()
+    threading.Thread(target=usage_loop, args=(controller, Reporter(COMMUNITY_BASE, VERSION, data_dir), stop), daemon=True).start()
     LOG.info("Golvvärme Comfort %s lyssnar på %s", VERSION, port)
     server.serve_forever()
 

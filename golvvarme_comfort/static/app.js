@@ -272,6 +272,7 @@ function renderSettings(s, entities) {
   settings = s;
   $("learn_rates").checked = s.learn_rates;
   $("price_aware_preheat").checked = s.price_aware_preheat;
+  $("share_usage").checked = s.share_usage;
   $("enabled").checked = s.enabled;
   NUMBERS.forEach((k) => { $(k).value = s[k]; });
   $("expensive_mode").value = s.expensive_mode;
@@ -292,7 +293,7 @@ function modeFields() {
 
 function collect() {
   const value = { enabled: $("enabled").checked, learn_rates: $("learn_rates").checked,
-    price_aware_preheat: $("price_aware_preheat").checked };
+    price_aware_preheat: $("price_aware_preheat").checked, share_usage: $("share_usage").checked };
   NUMBERS.forEach((k) => { value[k] = Number($(k).value); });
   SELECTS.forEach((k) => { value[k] = $(k).value; });
   value.comfort_periods = [...document.querySelectorAll(".period")].map((row) => ({
@@ -379,11 +380,11 @@ async function refresh() {
   }
 }
 
-// Installations according to the maintainer's published GitHub clone statistics; nothing is sent from here.
+// Installations active in the last 7 days, counted from the anonymous pings (see community.py).
 function communityText(community) {
   if (!community) return "";
   const n = community.installations;
-  return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
+  return `≈ ${n} ${n === 1 ? "aktiv installation" : "aktiva installationer"} senaste veckan`;
 }
 
 function showCommunity(community) {
@@ -394,7 +395,7 @@ function showCommunity(community) {
   if (!community) return;
   const n = community.installations;
   badge.textContent = `≈ ${n.toLocaleString("sv-SE")} ${n === 1 ? "installation" : "installationer"}`;
-  badge.title = `Unika installationer senaste 14 dagarna enligt GitHubs statistik över kloner av repot${community.updated ? ` (uppdaterad ${community.updated})` : ""}. Ungefärligt; inget skickas från din installation.`;
+  badge.title = `Aktiva installationer senaste 7 dagarna (${community.total.toLocaleString("sv-SE")} sedan start), räknade från den anonyma användningsstatistiken. Installationer som stängt av den räknas inte. Stängs av under Avancerat.`;
 }
 
 async function init() {

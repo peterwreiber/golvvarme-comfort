@@ -116,6 +116,7 @@
             <label>Elpris (Tibber eller Nord Pool)<select id="price_entity"></select><small>Välj givaren för aktuellt pris. Nord Pool ger spotpris utan skatt och nätavgift.</small></label>
             <label>Reservtemperatur (°C)<input type="number" step="0.5" id="fallback_temp"><small>Används när styrningen släpper termostaten och den saknar eget program (läget auto).</small></label>
             <label>Automation som krockar<select id="conflict_automation"></select></label>
+            <label class="toggle"><input type="checkbox" id="share_usage"> Skicka anonym användningsstatistik<small class="full">Var 6:e timme skickas bara ett slumpat id och versionsnumret, så att antalet installationer kan räknas. Inget om ditt hem, din termostat eller dina priser skickas, och ingen IP-adress sparas. Stänger du av det tas id:t bort ur räkningen.</small></label>
           </div>
         </details>
         <div class="actions"><span id="save-status" class="hint"></span><button type="submit">Spara</button></div>
@@ -126,7 +127,7 @@
       <h2>Händelser</h2>
       <ul id="events" class="events"></ul>
     </section>
-    <footer><span id="version"></span> <span id="community" title="Från GitHubs statistik över unika kloner av repot. Ungefärligt; inget skickas från din installation."></span></footer>
+    <footer><span id="version"></span> <span id="community"></span></footer>
   </main>
 </body>
 </html>

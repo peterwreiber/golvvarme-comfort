@@ -86,6 +86,8 @@ DEFAULTS = {
     "presence_near_km": 0.0,
     "power_kw": 1.0,
     "fallback_temp": 20.0,
+    # Anonymous ping {app, random id, version} every 6 h for the installation count; see community.py.
+    "share_usage": True,
     "vacation": {"enabled": False, "start": "", "end": "", "temp": 15.0},
 }
 
@@ -124,6 +126,8 @@ def validate(raw):
         raise PlanError("Inlärda takter måste vara på eller av.")
     if not isinstance(config["price_aware_preheat"], bool):
         raise PlanError("Sänkning vid dyr förvärmning måste vara på eller av.")
+    if not isinstance(config["share_usage"], bool):
+        raise PlanError("Anonym användningsstatistik måste vara på eller av.")
     for key, prefix in (("climate_entity", "climate."), ("price_entity", "sensor."), ("conflict_automation", "automation.")):
         value = config[key]
         if not isinstance(value, str) or (value and not value.startswith(prefix)):
